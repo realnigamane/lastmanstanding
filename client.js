@@ -55,14 +55,20 @@
       snap = m;
       if (curScreen !== 'game') { render.clear(); haz.length = 0; showScreen('game'); }
     } else if (m.t === 'home') {
-      const result = snap && snap.winner
-        ? (snap.winner === myUsername ? '🏆 You won the last match!' : 'Winner: ' + snap.winner)
+      let result = snap && snap.winner
+        ? (snap.winner === myUsername ? '🏆 You won!' : 'Winner: ' + snap.winner)
         : '';
+      if (m.won && m.payout) result = '🏆 You won! +' + m.payout + ' credits';
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
+      if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
       snap = null; render.clear(); haz.length = 0;
       $('hmResult').textContent = result;
       showScreen('home');
+    } else if (m.t === 'credits') {
+      myCredits = m.credits; $('hmCredits').textContent = m.credits;
+    } else if (m.t === 'matchError') {
+      $('hmResult').textContent = m.error || 'Could not start match.';
     } else if (m.t === 'withdrawResult') {
       $('wdMsg').textContent = m.ok ? ('✓ Requested ' + m.amount + ' credits — pending review') : (m.error || 'Could not submit.');
     }
@@ -113,11 +119,14 @@
     $('wdMsg').textContent = 'Submitting…';
     sendWS({ t: 'requestWithdraw', amount: amt });
   };
+  $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
+  document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) }); }; });
 
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
   function renderSearching(m) {
-    $('srTimer').textContent = m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…';
+    const tail = m.wager > 0 ? (' · 💰 pot ' + m.pot) : '';
+    $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;
     const dots = $('srDots');
     const lit = Math.min(m.target, Math.max(m.found, m.target - m.secs));
     let html = '';
@@ -296,6 +305,7 @@
   function drawHUD() {
     ctx.textAlign = 'left'; ctx.font = 'bold 15px Segoe UI, sans-serif'; ctx.fillStyle = '#c9d2ff';
     ctx.fillText('Alive: ' + snap.alive + ' / ' + snap.total, 14, 24);
+    if (snap.wager > 0) { ctx.fillStyle = '#ffd479'; ctx.fillText('💰 Pot ' + snap.pot, 14, 44); }
     if (snap.phase === 'playing') {
       ctx.textAlign = 'right'; ctx.fillStyle = '#ffd479'; ctx.font = 'bold 15px Segoe UI, sans-serif';
       ctx.fillText('Survived: ' + snap.roundTime + 's', W - 14, 24);

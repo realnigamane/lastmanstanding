@@ -143,7 +143,7 @@ const BOT_NAMES = ['Riley', 'Max', 'Nova', 'Kai', 'Zoe', 'Leo', 'Mia', 'Finn',
 const rooms = new Map();         // code -> room
 const allSessions = new Map();   // sessionId -> human session
 let nextSessionId = 1;
-let formingRoom = null;          // the room currently gathering players (or null)
+// Matchmaking rooms are found by scanning `rooms` for a waiting room with the same wager.
 
 function genCode() {
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -164,10 +164,10 @@ function aliveList(room) {
   return [...room.members.values()].filter(s => s.player && s.player.alive && !s.player.spectator);
 }
 
-function createRoom() {
+function createRoom(wager) {
   const code = genCode();
   const room = {
-    code, members: new Map(),
+    code, members: new Map(), wager: wager || 0, pot: 0,
     phase: 'matchmaking',                 // matchmaking | countdown | playing | roundover
     fillTimer: MATCH_WAIT_S, phaseTimer: 0,
     roundTime: 0, winnerName: null, scrollSpeed: SCROLL_START,
@@ -178,12 +178,10 @@ function createRoom() {
   return room;
 }
 
-function addToMatch(s) {
+function addToMatch(s, wager) {
   if (s.room) leaveMatch(s, true);
-  if (!formingRoom || formingRoom.phase !== 'matchmaking' || humanCount(formingRoom) >= MATCH_SIZE) {
-    formingRoom = createRoom();
-  }
-  const room = formingRoom;
+  let room = [...rooms.values()].find(r => r.phase === 'matchmaking' && r.wager === wager && humanCount(r) < MATCH_SIZE);
+  if (!room) room = createRoom(wager);
   s.room = room; s.player = newPlayer();
   room.members.set(s.id, s);
   sendSearch(room);
@@ -194,7 +192,6 @@ function leaveMatch(s, silent) {
   if (!room) return;
   room.members.delete(s.id);
   s.room = null; s.player = null;
-  if (formingRoom === room && humanCount(room) === 0) formingRoom = null;
   if (humanCount(room) === 0) { rooms.delete(room.code); }      // no humans -> drop match (and its bots)
   else if (room.phase === 'matchmaking') sendSearch(room);
   if (!silent) try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {}
@@ -454,18 +451,27 @@ function botThink(room, bot) {
 function startMatch(room) {
   fillWithBots(room);
   setupRound(room);
+  room.pot = room.wager * MATCH_SIZE;   // bots count toward the pot too
+  if (room.wager > 0) {                 // escrow each human's wager up front
+    for (const s of room.members.values()) {
+      if (!s.isBot) {
+        s.credits = Math.max(0, (s.credits || 0) - room.wager);
+        store.updateCredits(s.key, s.credits).catch(e => console.error('debit failed:', e.message));
+        try { s.conn.send(JSON.stringify({ t: 'credits', credits: s.credits })); } catch (e) {}
+      }
+    }
+  }
   room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
-  if (formingRoom === room) formingRoom = null;
   broadcastRoom(room);
 }
 function updateRoom(room, dt) {
   if (room.phase === 'matchmaking') {
-    if (humanCount(room) === 0) { rooms.delete(room.code); if (formingRoom === room) formingRoom = null; return; }
+    if (humanCount(room) === 0) { rooms.delete(room.code); return; }
     room.fillTimer -= dt;
     if (room.members.size >= MATCH_SIZE || room.fillTimer <= 0) startMatch(room);
     return;
   }
-  if (humanCount(room) === 0) { rooms.delete(room.code); if (formingRoom === room) formingRoom = null; return; }
+  if (humanCount(room) === 0) { rooms.delete(room.code); return; }
 
   if (room.phase === 'countdown') {
     room.phaseTimer -= dt;
@@ -487,7 +493,14 @@ function updateRoom(room, dt) {
       const winner = alive[0] || null;
       room.winnerName = winner ? winner.username : null;
       if (winner && !winner.isBot && winner.key) {
-        store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w) }; }).catch(e => console.error('recordWin failed:', e.message));
+        let payout = 0;
+        if (room.wager > 0) {
+          payout = Math.floor(room.pot * 0.9);   // winner takes the pot minus 10% platform fee
+          winner.credits = (winner.credits || 0) + payout;
+          store.updateCredits(winner.key, winner.credits).catch(e => console.error('payout failed:', e.message));
+        }
+        store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w), credits: winner.credits, payout: payout }; })
+          .catch(e => console.error('recordWin failed:', e.message));
       }
       room.phase = 'roundover'; room.phaseTimer = ROUNDOVER_S;
       broadcastRoom(room);
@@ -498,14 +511,14 @@ function updateRoom(room, dt) {
       // Send humans home; the match (and its bots) dissolves.
       for (const s of room.members.values()) {
         if (!s.isBot) {
-          const home = { t: 'home' };
-          if (s.wonStats) { home.wins = s.wonStats.wins; home.rank = s.wonStats.rank; home.won = true; s.wonStats = null; }
+          const home = { t: 'home', credits: s.credits };
+          if (s.wonStats) { home.wins = s.wonStats.wins; home.rank = s.wonStats.rank; home.won = true; home.payout = s.wonStats.payout; s.wonStats = null; }
           s.room = null; s.player = null;
           try { s.conn.send(JSON.stringify(home)); } catch (e) {}
         }
       }
       rooms.delete(room.code);
-      if (formingRoom === room) formingRoom = null;
+     
     }
   }
 }
@@ -523,6 +536,7 @@ function sendSearch(room) {
     t: 'searching',
     found: humanCount(room),
     target: MATCH_SIZE, secs: Math.max(0, Math.ceil(room.fillTimer)),
+    wager: room.wager, pot: room.wager * MATCH_SIZE,
     members: memberList(room),
   });
   for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
@@ -533,6 +547,7 @@ function roomSnapshot(room) {
     countdown: Math.max(0, Math.ceil(room.phaseTimer)),
     roundTime: Math.floor(room.roundTime), winner: room.winnerName,
     alive: aliveList(room).length, total: room.members.size,
+    wager: room.wager, pot: room.pot,
     scroll: Math.round(room.scrollSpeed),
     platforms: room.platforms.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
     hazards: room.hazards.map(b => ({ x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
@@ -582,7 +597,7 @@ ws.attach(server, (conn) => {
       if (!key) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
       store.getUser(key).then((u) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
-        s.username = u.username; s.key = key;
+        s.username = u.username; s.key = key; s.credits = u.credits;
         conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0) }));
       }).catch((e) => {
         console.error('auth lookup failed:', e.message);
@@ -593,7 +608,9 @@ ws.attach(server, (conn) => {
     if (!s.username) return; // everything below requires auth
 
     if (m.t === 'findMatch') {
-      addToMatch(s);
+      const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
+      if (wager > 0 && (s.credits || 0) < wager) { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that wager.' })); return; }
+      addToMatch(s, wager);
     } else if (m.t === 'leaveMatch') {
       leaveMatch(s, false);
     } else if (m.t === 'input') {

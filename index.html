@@ -108,6 +108,9 @@
   .row2 > .card { flex: 1; }
   .dash input { margin-bottom: 8px; }
   @media (max-width: 520px) { .row2 { flex-direction: column; } }
+  .wagers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wager { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 14px; padding: 10px 6px; }
+  .wager span { font-size: 11px; font-weight: 600; opacity: .8; }
   /* Let the dashboard scroll when it's taller than the screen (esp. mobile) */
   #home { justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding-top: 22px; padding-bottom: 44px; }
 </style>
@@ -148,7 +151,16 @@
         <h2>Practice</h2>
         <p class="sub" style="margin:0 0 12px">Free play to sharpen up before cash matches — no credits at stake.</p>
         <button id="btnFind" class="wide big">🎮 Practice Match</button>
-        <button id="btnPaid" class="wide ghost" style="margin-top:10px" disabled>💵 Cash Match — coming soon</button>
+        <button id="btnCash" class="wide" style="margin-top:10px;background:linear-gradient(90deg,#ffd479,#ff9f43)">💵 Cash Match</button>
+        <div id="wagerPick" style="display:none;margin-top:10px">
+          <p class="muted" style="margin:0 0 7px">Pick your stake — pot is 8× your wager, winner takes it minus a 10% fee:</p>
+          <div class="wagers">
+            <button class="wager" data-w="5">5 credits<span>win 36</span></button>
+            <button class="wager" data-w="10">10 credits<span>win 72</span></button>
+            <button class="wager" data-w="50">50 credits<span>win 360</span></button>
+            <button class="wager" data-w="100">100 credits<span>win 720</span></button>
+          </div>
+        </div>
         <div id="hmResult" class="muted" style="margin-top:10px;min-height:18px"></div>
       </div>
 
