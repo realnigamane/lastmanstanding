@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Last Man Standing</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: radial-gradient(1200px 800px at 50% -10%, #16203f, #0b0e1a 60%);
+    color: #e8ecff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent; touch-action: none;
+  }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; padding: 16px; }
+  .screen.active { display: flex; }
+
+  .card {
+    background: #141a31; border: 1px solid #2a3358; border-radius: 16px;
+    padding: 28px 30px; width: min(420px, 94vw); text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: .5px; }
+  h1 .tm { color: #4be3ff; }
+  .sub { color: #8b95c9; font-size: 13.5px; line-height: 1.5; margin: 0 0 20px; }
+  input {
+    width: 100%; padding: 12px 14px; font-size: 16px; border-radius: 10px;
+    border: 1px solid #34406e; background: #0e1326; color: #fff; outline: none; margin-bottom: 12px;
+  }
+  input:focus { border-color: #5a6cff; }
+  button {
+    cursor: pointer; border: none; border-radius: 10px; font-weight: 600; font-size: 15px;
+    padding: 12px 16px; color: #06122b;
+    background: linear-gradient(90deg, #4be3ff, #7d5fff);
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .4; cursor: not-allowed; filter: none; }
+  button.ghost { background: #1d264a; color: #cdd6ff; border: 1px solid #34406e; }
+  button.wide { width: 100%; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tabs button { flex: 1; background: #1d264a; color: #9fb0e8; border: 1px solid #2a3358; }
+  .tabs button.sel { background: linear-gradient(90deg, #4be3ff, #7d5fff); color: #06122b; }
+  .err { color: #ff8a8a; font-size: 13px; min-height: 18px; margin: 2px 0 10px; }
+  .muted { color: #8b95c9; font-size: 12.5px; }
+
+  /* Lobby */
+  .topbar { display: flex; justify-content: space-between; align-items: center; width: min(560px,94vw); margin-bottom: 14px; }
+  .topbar .who { font-weight: 600; }
+  .topbar .cred { color: #ffd479; font-size: 14px; }
+  .roomlist { width: min(560px,94vw); max-height: 38vh; overflow-y: auto; margin-top: 14px; text-align: left; }
+  .roomitem {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #141a31; border: 1px solid #2a3358; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px;
+  }
+  .roomitem .code { font-weight: 700; letter-spacing: 2px; color: #cde2ff; }
+  .roomitem button { padding: 7px 14px; font-size: 13px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #25305c; color: #9fb0e8; margin-left: 8px; }
+  .pill.live { background: #4b1f2c; color: #ff8aa6; }
+
+  /* Room waiting */
+  .members { width: min(480px,94vw); margin: 6px 0 16px; }
+  .member {
+    display: flex; align-items: center; gap: 10px; background: #0e1326;
+    border: 1px solid #2a3358; border-radius: 10px; padding: 9px 12px; margin-bottom: 7px;
+  }
+  .dot { width: 16px; height: 16px; border-radius: 5px; flex: none; }
+  .member .nm { flex: 1; text-align: left; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .badge.host { background: #3a2f12; color: #ffd479; }
+  .badge.ready { background: #16331f; color: #7bed9f; }
+  .badge.wait { background: #2a2030; color: #c69bd6; }
+  .codebig { font-size: 30px; letter-spacing: 8px; font-weight: 800; color: #4be3ff; margin: 2px 0 2px; }
+
+  /* Game */
+  #gameWrap { position: relative; }
+  canvas {
+    background: linear-gradient(#101a3a, #0b0e1a);
+    border: 2px solid #2a3358; border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); display: block;
+  }
+  #hint { color: #8b95c9; font-size: 13px; text-align: center; margin-top: 8px; padding: 0 10px; }
+  #hint b { color: #c9d2ff; }
+
+  /* Mobile controls */
+  #touch { display: none; position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+  body.touch #game.active ~ #touch, body.touch.playing #touch { display: block; }
+  .pad { position: fixed; bottom: 18px; display: flex; gap: 16px; pointer-events: none; }
+  .pad.left { left: 18px; } .pad.right { right: 18px; }
+  .tbtn {
+    pointer-events: auto; width: 74px; height: 74px; border-radius: 50%;
+    border: 2px solid rgba(122,135,210,.5); background: rgba(20,26,49,.55);
+    color: #dfe5ff; font-size: 26px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none; backdrop-filter: blur(2px);
+  }
+  .tbtn.active { background: rgba(91,104,184,.75); transform: scale(.94); }
+  .tbtn.jump { width: 96px; height: 96px; font-size: 18px; border-color: rgba(75,227,255,.6); }
+  #rotatehint { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,26,49,.9); color: #cdd6ff; padding: 7px 14px; border-radius: 9px;
+    font-size: 12px; z-index: 8; pointer-events: none; border: 1px solid #34406e; }
+  body.touch.playing #rotatehint { }
+  @media (orientation: portrait) { body.touch.playing #rotatehint { display: block; } }
+</style>
+</head>
+<body>
+
+  <!-- AUTH -->
+  <div id="auth" class="screen active">
+    <div class="card">
+      <h1>Last Man <span class="tm">Standing</span></h1>
+      <p class="sub">Jump across moving platforms. Last one who hasn't fallen wins. It speeds up the longer you survive.</p>
+      <div class="tabs">
+        <button id="tabLogin" class="sel">Log in</button>
+        <button id="tabRegister">Sign up</button>
+      </div>
+      <input id="auUser" maxlength="16" placeholder="Username" autocomplete="username" />
+      <input id="auPass" type="password" maxlength="64" placeholder="Password" autocomplete="current-password" />
+      <div id="auErr" class="err"></div>
+      <button id="auGo" class="wide">Log in</button>
+      <p class="muted" style="margin-top:14px">New accounts start with 1000 practice credits.</p>
+    </div>
+  </div>
+
+  <!-- LOBBY -->
+  <div id="lobby" class="screen">
+    <div class="topbar">
+      <div class="who">👤 <span id="lbUser">—</span></div>
+      <div class="cred">💰 <span id="lbCredits">0</span> credits</div>
+    </div>
+    <div class="card">
+      <h1 style="font-size:22px">Play</h1>
+      <p class="sub">Start a match with 2–10 players. Share your room code with friends, or quick-play into any open game.</p>
+      <button id="btnQuick" class="wide" style="margin-bottom:10px">⚡ Quick Play</button>
+      <div class="row" style="margin-bottom:12px">
+        <button id="btnCreate" class="ghost">＋ Create room</button>
+        <button id="btnLogout" class="ghost">Log out</button>
+      </div>
+      <div class="row">
+        <input id="joinCode" maxlength="4" placeholder="CODE" style="text-transform:uppercase; letter-spacing:4px; text-align:center; margin:0" />
+        <button id="btnJoin">Join</button>
+      </div>
+      <div id="lobErr" class="err" style="margin-top:10px"></div>
+    </div>
+    <div id="roomList" class="roomlist"></div>
+  </div>
+
+  <!-- ROOM (waiting) -->
+  <div id="room" class="screen">
+    <div class="card">
+      <p class="muted" style="margin:0">Room code — share to invite</p>
+      <div class="codebig" id="rmCode">----</div>
+      <p class="sub" id="rmStatus">Waiting for players…</p>
+      <div class="members" id="rmMembers"></div>
+      <div class="row">
+        <button id="btnReady" class="ghost">I'm ready</button>
+        <button id="btnStart">Start match</button>
+      </div>
+      <button id="btnLeave" class="ghost wide" style="margin-top:10px">Leave room</button>
+      <p class="muted" id="rmHostNote" style="margin-top:10px"></p>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="game" class="screen">
+    <div id="gameWrap">
+      <canvas id="canvas" width="960" height="600"></canvas>
+    </div>
+    <div id="hint">Move <b>← →</b> / <b>A D</b> &nbsp;·&nbsp; Jump <b>Space</b> / <b>↑</b> / <b>W</b> &nbsp;·&nbsp; Don't fall!</div>
+  </div>
+
+  <div id="rotatehint">↻ Rotate your phone sideways for a bigger view</div>
+  <div id="touch">
+    <div class="pad left">
+      <button id="btnLeft" class="tbtn">◀</button>
+      <button id="btnRight" class="tbtn">▶</button>
+    </div>
+    <div class="pad right">
+      <button id="btnJump" class="tbtn jump">JUMP</button>
+    </div>
+  </div>
+
+  <script src="client.js"></script>
+</body>
+</html>

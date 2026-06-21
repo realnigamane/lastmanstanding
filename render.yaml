@@ -1,0 +1,16 @@
+# Render Blueprint — lets Render auto-configure the service when you connect this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: lastmanstanding
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      # Fill these in the Render dashboard (Environment tab). They are NOT stored in git.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
