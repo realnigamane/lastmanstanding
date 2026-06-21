@@ -40,6 +40,7 @@
   button:disabled { opacity: .4; cursor: not-allowed; filter: none; }
   button.ghost { background: #1d264a; color: #cdd6ff; border: 1px solid #34406e; }
   button.wide { width: 100%; }
+  button.big { font-size: 19px; padding: 18px; }
   .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -48,38 +49,25 @@
   .err { color: #ff8a8a; font-size: 13px; min-height: 18px; margin: 2px 0 10px; }
   .muted { color: #8b95c9; font-size: 12.5px; }
 
-  /* Lobby */
-  .topbar { display: flex; justify-content: space-between; align-items: center; width: min(560px,94vw); margin-bottom: 14px; }
+  /* Home */
+  .topbar { display: flex; justify-content: space-between; align-items: center; width: min(420px,94vw); margin-bottom: 14px; }
   .topbar .who { font-weight: 600; }
   .topbar .cred { color: #ffd479; font-size: 14px; }
-  .roomlist { width: min(560px,94vw); max-height: 38vh; overflow-y: auto; margin-top: 14px; text-align: left; }
-  .roomitem {
-    display: flex; align-items: center; justify-content: space-between;
-    background: #141a31; border: 1px solid #2a3358; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px;
-  }
-  .roomitem .code { font-weight: 700; letter-spacing: 2px; color: #cde2ff; }
-  .roomitem button { padding: 7px 14px; font-size: 13px; }
-  .pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #25305c; color: #9fb0e8; margin-left: 8px; }
-  .pill.live { background: #4b1f2c; color: #ff8aa6; }
 
-  /* Room waiting */
-  .members { width: min(480px,94vw); margin: 6px 0 16px; }
-  .member {
-    display: flex; align-items: center; gap: 10px; background: #0e1326;
-    border: 1px solid #2a3358; border-radius: 10px; padding: 9px 12px; margin-bottom: 7px;
-  }
-  .dot { width: 16px; height: 16px; border-radius: 5px; flex: none; }
-  .member .nm { flex: 1; text-align: left; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; }
-  .badge.host { background: #3a2f12; color: #ffd479; }
-  .badge.ready { background: #16331f; color: #7bed9f; }
-  .badge.wait { background: #2a2030; color: #c69bd6; }
-  .codebig { font-size: 30px; letter-spacing: 8px; font-weight: 800; color: #4be3ff; margin: 2px 0 2px; }
+  /* Searching */
+  .spinner { width: 46px; height: 46px; margin: 6px auto 14px; border-radius: 50%;
+    border: 4px solid #2a3358; border-top-color: #4be3ff; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .count { font-size: 40px; font-weight: 800; color: #4be3ff; margin: 2px 0; }
+  .dots { display: flex; gap: 7px; justify-content: center; margin: 14px 0 6px; flex-wrap: wrap; }
+  .slot { width: 16px; height: 16px; border-radius: 5px; background: #1d264a; border: 1px solid #34406e; }
+  .slot.human { background: #32ff7e; border-color: #32ff7e; }
+  .slot.bot { background: #46508c; border-color: #5d68b8; }
 
   /* Game */
   #gameWrap { position: relative; }
   canvas {
-    background: linear-gradient(#101a3a, #0b0e1a);
+    background: linear-gradient(#0e1838, #0b0e1a 70%, #160b16);
     border: 2px solid #2a3358; border-radius: 10px;
     box-shadow: 0 20px 60px rgba(0,0,0,.5); display: block;
   }
@@ -88,7 +76,7 @@
 
   /* Mobile controls */
   #touch { display: none; position: fixed; inset: 0; z-index: 5; pointer-events: none; }
-  body.touch #game.active ~ #touch, body.touch.playing #touch { display: block; }
+  body.touch.playing #touch { display: block; }
   .pad { position: fixed; bottom: 18px; display: flex; gap: 16px; pointer-events: none; }
   .pad.left { left: 18px; } .pad.right { right: 18px; }
   .tbtn {
@@ -103,7 +91,6 @@
   #rotatehint { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
     background: rgba(20,26,49,.9); color: #cdd6ff; padding: 7px 14px; border-radius: 9px;
     font-size: 12px; z-index: 8; pointer-events: none; border: 1px solid #34406e; }
-  body.touch.playing #rotatehint { }
   @media (orientation: portrait) { body.touch.playing #rotatehint { display: block; } }
 </style>
 </head>
@@ -113,7 +100,7 @@
   <div id="auth" class="screen active">
     <div class="card">
       <h1>Last Man <span class="tm">Standing</span></h1>
-      <p class="sub">Jump across moving platforms. Last one who hasn't fallen wins. It speeds up the longer you survive.</p>
+      <p class="sub">Climb the falling platforms. The floor keeps rising — stay still and you drop. Last one standing wins.</p>
       <div class="tabs">
         <button id="tabLogin" class="sel">Log in</button>
         <button id="tabRegister">Sign up</button>
@@ -126,42 +113,31 @@
     </div>
   </div>
 
-  <!-- LOBBY -->
-  <div id="lobby" class="screen">
+  <!-- HOME -->
+  <div id="home" class="screen">
     <div class="topbar">
-      <div class="who">👤 <span id="lbUser">—</span></div>
-      <div class="cred">💰 <span id="lbCredits">0</span> credits</div>
+      <div class="who">👤 <span id="hmUser">—</span></div>
+      <div class="cred">💰 <span id="hmCredits">0</span> credits</div>
     </div>
     <div class="card">
-      <h1 style="font-size:22px">Play</h1>
-      <p class="sub">Start a match with 2–10 players. Share your room code with friends, or quick-play into any open game.</p>
-      <button id="btnQuick" class="wide" style="margin-bottom:10px">⚡ Quick Play</button>
-      <div class="row" style="margin-bottom:12px">
-        <button id="btnCreate" class="ghost">＋ Create room</button>
-        <button id="btnLogout" class="ghost">Log out</button>
-      </div>
-      <div class="row">
-        <input id="joinCode" maxlength="4" placeholder="CODE" style="text-transform:uppercase; letter-spacing:4px; text-align:center; margin:0" />
-        <button id="btnJoin">Join</button>
-      </div>
-      <div id="lobErr" class="err" style="margin-top:10px"></div>
+      <h1 style="font-size:22px">Ready to play?</h1>
+      <p class="sub">Hit Find Match and you'll be dropped into a game with other players. Quiet right now? Bots fill the empty seats so you never wait around.</p>
+      <button id="btnFind" class="wide big" style="margin-bottom:12px">🎮 Find Match</button>
+      <button id="btnLogout" class="ghost wide">Log out</button>
+      <div id="hmResult" class="muted" style="margin-top:14px;min-height:18px"></div>
     </div>
-    <div id="roomList" class="roomlist"></div>
   </div>
 
-  <!-- ROOM (waiting) -->
-  <div id="room" class="screen">
+  <!-- SEARCHING -->
+  <div id="searching" class="screen">
     <div class="card">
-      <p class="muted" style="margin:0">Room code — share to invite</p>
-      <div class="codebig" id="rmCode">----</div>
-      <p class="sub" id="rmStatus">Waiting for players…</p>
-      <div class="members" id="rmMembers"></div>
-      <div class="row">
-        <button id="btnReady" class="ghost">I'm ready</button>
-        <button id="btnStart">Start match</button>
-      </div>
-      <button id="btnLeave" class="ghost wide" style="margin-top:10px">Leave room</button>
-      <p class="muted" id="rmHostNote" style="margin-top:10px"></p>
+      <div class="spinner"></div>
+      <h1 style="font-size:20px">Finding you a match…</h1>
+      <div class="count"><span id="srFound">1</span>/<span id="srTarget">8</span></div>
+      <p class="sub" id="srSub" style="margin:6px 0 0">Players ready</p>
+      <div class="dots" id="srDots"></div>
+      <p class="muted" id="srTimer" style="margin:10px 0 16px">Starting soon…</p>
+      <button id="btnCancel" class="ghost wide">Cancel</button>
     </div>
   </div>
 
@@ -170,7 +146,7 @@
     <div id="gameWrap">
       <canvas id="canvas" width="960" height="600"></canvas>
     </div>
-    <div id="hint">Move <b>← →</b> / <b>A D</b> &nbsp;·&nbsp; Jump <b>Space</b> / <b>↑</b> / <b>W</b> &nbsp;·&nbsp; Don't fall!</div>
+    <div id="hint">Move <b>← →</b> / <b>A D</b> &nbsp;·&nbsp; Jump <b>Space</b> / <b>↑</b> / <b>W</b> &nbsp;·&nbsp; Keep climbing — don't let the floor catch you!</div>
   </div>
 
   <div id="rotatehint">↻ Rotate your phone sideways for a bigger view</div>

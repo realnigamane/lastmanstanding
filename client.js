@@ -1,4 +1,4 @@
-// Last Man Standing - client (accounts + lobby + rooms + game)
+// Last Man Standing - client (accounts + matchmaking + climb-or-die game)
 (function () {
   const $ = (id) => document.getElementById(id);
   const canvas = $('canvas'), ctx = canvas.getContext('2d');
@@ -6,15 +6,16 @@
 
   let ws = null, wsReady = false, pendingAuthToken = null;
   let myUsername = null, myCredits = 0;
-  let snap = null;            // latest room snapshot
+  let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
-  const render = new Map();   // username -> {x,y} interpolated
+  const render = new Map();        // id -> {x,y} interpolated positions
 
   // ---------- Screens ----------
-  const screens = ['auth', 'lobby', 'room', 'game'];
+  const screens = ['auth', 'home', 'searching', 'game'];
   function showScreen(name) {
     curScreen = name;
     for (const s of screens) $(s).classList.toggle('active', s === name);
+    document.body.classList.toggle('playing', name === 'game');
     if (name === 'game') resizeCanvas();
   }
 
@@ -35,28 +36,31 @@
   function handleMsg(m) {
     if (m.t === 'authed') {
       myUsername = m.username; myCredits = m.credits;
-      $('lbUser').textContent = myUsername;
-      $('lbCredits').textContent = myCredits;
-      showScreen('lobby');
+      $('hmUser').textContent = myUsername;
+      $('hmCredits').textContent = myCredits;
+      showScreen('home');
     } else if (m.t === 'authfail') {
       localStorage.removeItem('lms_token');
       showScreen('auth');
       $('auErr').textContent = 'Session expired — please log in again.';
-    } else if (m.t === 'rooms') {
-      if (curScreen === 'lobby') renderRoomList(m.list);
+    } else if (m.t === 'searching') {
+      renderSearching(m);
+      if (curScreen !== 'searching') showScreen('searching');
     } else if (m.t === 'snapshot') {
       snap = m;
-      onSnapshot();
-    } else if (m.t === 'left') {
+      if (curScreen !== 'game') { render.clear(); showScreen('game'); }
+    } else if (m.t === 'home') {
+      // match ended or queue left
+      const result = snap && snap.winner
+        ? (snap.winner === myUsername ? '🏆 You won the last match!' : 'Winner: ' + snap.winner)
+        : '';
       snap = null; render.clear();
-      showScreen('lobby');
-    } else if (m.t === 'error') {
-      $('lobErr').textContent = m.msg;
-      setTimeout(() => { if ($('lobErr').textContent === m.msg) $('lobErr').textContent = ''; }, 3000);
+      $('hmResult').textContent = result;
+      showScreen('home');
     }
   }
 
-  // ---------- Auth screen ----------
+  // ---------- Auth ----------
   let authMode = 'login';
   function setAuthMode(mode) {
     authMode = mode;
@@ -91,74 +95,23 @@
   $('auPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('auPass').focus(); });
 
-  // ---------- Lobby screen ----------
-  $('btnQuick').onclick = () => sendWS({ t: 'quickPlay' });
-  $('btnCreate').onclick = () => sendWS({ t: 'createRoom', maxPlayers: 8 });
-  $('btnJoin').onclick = () => {
-    const code = $('joinCode').value.trim().toUpperCase();
-    if (code) sendWS({ t: 'joinRoom', code });
-  };
-  $('joinCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
+  // ---------- Home ----------
+  $('btnFind').onclick = () => { $('hmResult').textContent = ''; sendWS({ t: 'findMatch' }); };
   $('btnLogout').onclick = () => { localStorage.removeItem('lms_token'); location.reload(); };
 
-  function renderRoomList(list) {
-    const open = list.filter(r => r.phase === 'waiting');
-    const el = $('roomList');
-    if (!list.length) { el.innerHTML = '<div class="muted" style="text-align:center">No open rooms yet — create one!</div>'; return; }
-    el.innerHTML = list.map(r => {
-      const live = r.phase !== 'waiting';
-      return '<div class="roomitem"><div><span class="code">' + r.code + '</span>' +
-        '<span class="pill">' + r.players + '/' + r.max + '</span>' +
-        (live ? '<span class="pill live">in game</span>' : '') +
-        '<div class="muted">host: ' + esc(r.host) + '</div></div>' +
-        '<button data-code="' + r.code + '"' + (r.players >= r.max ? ' disabled' : '') + '>Join</button></div>';
-    }).join('');
-    el.querySelectorAll('button[data-code]').forEach(b => {
-      b.onclick = () => sendWS({ t: 'joinRoom', code: b.getAttribute('data-code') });
-    });
-  }
-
-  // ---------- Room screen ----------
-  $('btnReady').onclick = () => {
-    const me = snap && snap.members.find(x => x.username === myUsername);
-    sendWS({ t: 'ready', value: !(me && me.ready) });
-  };
-  $('btnStart').onclick = () => sendWS({ t: 'startGame' });
-  $('btnLeave').onclick = () => sendWS({ t: 'leaveRoom' });
-
-  let lastRoomKey = '';
-  function renderRoom() {
-    const amHost = snap.host === myUsername;
-    $('rmCode').textContent = snap.code;
-    const enough = snap.members.length >= snap.minToStart;
-    $('rmStatus').textContent = enough
-      ? (amHost ? 'Ready when you are — press Start.' : 'Waiting for the host to start…')
-      : ('Waiting for players… need at least ' + snap.minToStart + ' (open another tab or share the code).');
-    $('rmMembers').innerHTML = snap.members.map(mm =>
-      '<div class="member"><span class="dot" style="background:' + mm.color + '"></span>' +
-      '<span class="nm">' + esc(mm.username) + (mm.username === myUsername ? ' (you)' : '') + '</span>' +
-      (mm.isHost ? '<span class="badge host">host</span>'
-                 : '<span class="badge ' + (mm.ready ? 'ready' : 'wait') + '">' + (mm.ready ? 'ready' : 'not ready') + '</span>') +
-      '</div>').join('');
-    const me = snap.members.find(x => x.username === myUsername);
-    $('btnReady').textContent = me && me.ready ? '✓ Ready' : "I'm ready";
-    $('btnStart').style.display = amHost ? '' : 'none';
-    $('btnStart').disabled = !enough;
-    $('rmHostNote').textContent = amHost
-      ? 'You are the host. The match auto-starts when the room is full (' + snap.maxPlayers + ').'
-      : 'Host: ' + snap.host;
-  }
-
-  function onSnapshot() {
-    document.body.classList.toggle('playing', snap.phase === 'playing');
-    if (snap.phase === 'waiting') {
-      if (curScreen !== 'room') showScreen('room');
-      const key = JSON.stringify(snap.members) + snap.host + snap.code;
-      if (key !== lastRoomKey) { lastRoomKey = key; renderRoom(); }
-    } else {
-      lastRoomKey = '';
-      if (curScreen !== 'game') showScreen('game');
-    }
+  // ---------- Searching ----------
+  $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
+  function renderSearching(m) {
+    $('srFound').textContent = m.found;
+    $('srTarget').textContent = m.target;
+    $('srSub').textContent = m.found === 1 ? 'player searching' : 'players searching';
+    $('srTimer').textContent = m.secs > 0
+      ? 'Filling with bots in ' + m.secs + 's…'
+      : 'Starting…';
+    const dots = $('srDots');
+    let html = '';
+    for (let i = 0; i < m.target; i++) html += '<div class="slot ' + (i < m.found ? 'human' : '') + '"></div>';
+    dots.innerHTML = html;
   }
 
   // ---------- Input ----------
@@ -217,21 +170,21 @@
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || !snap || !snap.platforms) return;
     ctx.clearRect(0, 0, W, H);
-    // danger floor — fall down here and you're out
-    const dg = ctx.createLinearGradient(0, H - 60, 0, H);
+
+    // Rising danger floor at the bottom — fall here and you're out.
+    const dg = ctx.createLinearGradient(0, H - 80, 0, H);
     dg.addColorStop(0, 'rgba(255,60,80,0)');
-    dg.addColorStop(1, 'rgba(255,40,70,0.35)');
-    ctx.fillStyle = dg; ctx.fillRect(0, H - 60, W, 60);
+    dg.addColorStop(1, 'rgba(255,40,70,0.42)');
+    ctx.fillStyle = dg; ctx.fillRect(0, H - 80, W, 80);
 
     for (const p of snap.platforms) {
-      if (p.y < -p.h || p.y > H) continue; // skip off-screen platforms
+      if (p.y < -p.h || p.y > H) continue;
       ctx.fillStyle = '#46508c'; roundRect(p.x, p.y, p.w, p.h, 6);
       ctx.fillStyle = '#6b78cf'; ctx.fillRect(p.x + 3, p.y + 2, p.w - 6, 3);
     }
     for (const pl of snap.players) {
       let r = render.get(pl.id);
       if (!r) { r = { x: pl.x, y: pl.y }; render.set(pl.id, r); }
-      // snap (don't glide) when a player teleports — new round / big move
       if (Math.abs(pl.x - r.x) > 140 || Math.abs(pl.y - r.y) > 140) { r.x = pl.x; r.y = pl.y; }
       else { r.x = lerp(r.x, pl.x, 0.4); r.y = lerp(r.y, pl.y, 0.4); }
       drawPlayer(r.x, r.y, pl);
@@ -241,24 +194,24 @@
     drawHUD(); drawPhaseOverlay();
   }
   function drawPlayer(x, y, pl) {
-    const s = 30, cx = x + s / 2, cy = y + s / 2, r = 14;
-    ctx.globalAlpha = pl.spectator ? 0.22 : 1;
+    const s = 28, cx = x + s / 2, cy = y + s / 2, r = 13;
+    ctx.globalAlpha = pl.spectator ? 0.18 : 1;
     const dir = pl.vx < -0.4 ? -1 : pl.vx > 0.4 ? 1 : 0;
-    // little feet
+    // feet
     ctx.fillStyle = '#e25b7a';
-    ctx.beginPath(); ctx.ellipse(cx - 7, y + s - 3, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx + 7, y + s - 3, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx - 7, y + s - 2, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 7, y + s - 2, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
     // round body
     ctx.fillStyle = pl.color;
     ctx.beginPath(); ctx.arc(cx, cy - 1, r, 0, Math.PI * 2); ctx.fill();
-    // soft highlight
+    // highlight
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.beginPath(); ctx.arc(cx - 4, cy - 6, 5, 0, Math.PI * 2); ctx.fill();
     // blush cheeks
     ctx.fillStyle = 'rgba(255,120,150,0.55)';
     ctx.beginPath(); ctx.ellipse(cx - 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(cx + 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
-    // eyes look the way you're moving
+    // eyes (look the way you're moving)
     const ex = cx + dir * 2;
     ctx.fillStyle = '#1a2342';
     ctx.beginPath(); ctx.ellipse(ex - 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
@@ -267,37 +220,33 @@
     ctx.beginPath(); ctx.arc(ex - 4.6, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(ex + 3.4, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
+    // name (bots get a tiny tag)
     ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillStyle = pl.id === myUsername ? '#9fffce' : '#c9d2ff';
-    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 5);
+    ctx.fillStyle = pl.id === myUsername ? '#9fffce' : (pl.bot ? '#8b95c9' : '#c9d2ff');
+    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name + (pl.bot ? ' ·bot' : ''), cx, y - 5);
   }
   function drawHUD() {
-    const total = snap.members.length;
     ctx.textAlign = 'left'; ctx.font = 'bold 15px Segoe UI, sans-serif'; ctx.fillStyle = '#c9d2ff';
-    ctx.fillText('Alive: ' + snap.alive + ' / ' + total, 14, 24);
-    ctx.textAlign = 'center'; ctx.fillStyle = '#8b95c9'; ctx.font = '12px Segoe UI, sans-serif';
-    ctx.fillText('Room ' + snap.code, W / 2, 22);
+    ctx.fillText('Alive: ' + snap.alive + ' / ' + snap.total, 14, 24);
     if (snap.phase === 'playing') {
       ctx.textAlign = 'right'; ctx.fillStyle = '#ffd479'; ctx.font = 'bold 15px Segoe UI, sans-serif';
       ctx.fillText('Survived: ' + snap.roundTime + 's', W - 14, 24);
-      const diff = Math.min(1, snap.roundTime / 60);
-      ctx.fillStyle = '#23284a'; ctx.fillRect(W - 174, 32, 160, 6);
-      ctx.fillStyle = diff > .66 ? '#ff5252' : diff > .33 ? '#ffb142' : '#32ff7e';
-      ctx.fillRect(W - 174, 32, 160 * diff, 6);
       if (snap.roundTime < 6) {
         ctx.textAlign = 'center'; ctx.fillStyle = '#9fffce'; ctx.font = 'bold 15px Segoe UI, sans-serif';
-        ctx.fillText('Climb! The floor is falling — keep jumping up', W / 2, 54);
+        ctx.fillText('Climb! The floor is rising — keep jumping up', W / 2, 26);
       }
     }
   }
   function drawPhaseOverlay() {
     if (snap.phase === 'countdown') {
-      shade(); center('Get ready!', '#fff', 26, -28); center(String(snap.countdown), '#4be3ff', 64, 26);
+      shade(); center('Get ready to climb!', '#fff', 26, -28); center(String(snap.countdown), '#4be3ff', 64, 26);
     } else if (snap.phase === 'roundover') {
       shade();
-      if (snap.winner) center('🏆  ' + snap.winner + '  wins!', '#ffd479', 36, -10);
-      else center('Draw — everyone fell!', '#ff8a8a', 30, -10);
-      center('Back to the room in ' + snap.countdown + '…', '#8b95c9', 16, 30);
+      if (snap.winner) {
+        const mine = snap.winner === myUsername;
+        center(mine ? '🏆  You win!' : '🏆  ' + snap.winner + '  wins!', mine ? '#9fffce' : '#ffd479', 34, -10);
+      } else center('Draw — everyone fell!', '#ff8a8a', 30, -10);
+      center('Back to menu in ' + snap.countdown + '…', '#8b95c9', 16, 30);
     }
   }
   function shade() { ctx.fillStyle = 'rgba(7,9,20,0.55)'; ctx.fillRect(0, 0, W, H); }
@@ -312,7 +261,6 @@
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath(); ctx.fill();
   }
-  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   // ---------- Boot ----------
   setAuthMode('login');

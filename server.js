@@ -1,4 +1,5 @@
-// Last Man Standing - multiplayer server with accounts + lobby/rooms (zero dependencies).
+// Last Man Standing - multiplayer server (zero dependencies).
+// Accounts + automatic matchmaking + competitive AI bots + climb-or-die gameplay.
 // Run:  node server.js   then open http://localhost:3000
 const http = require('http');
 const fs = require('fs');
@@ -100,24 +101,37 @@ const server = http.createServer((req, res) => {
 
 // =================== Game constants ===================
 const WORLD = { w: 960, h: 600 };
-const TICK_MS = 1000 / 60;
-const BROADCAST_EVERY = 2;
-const PW = 30, PH = 30;
-const GRAVITY = 0.62, MOVE_ACCEL = 0.9, MOVE_MAX = 5.4, FRICTION = 0.80;
-const JUMP_V = -15, MAX_FALL = 18;
-const COUNTDOWN_S = 4, ROUNDOVER_S = 6;
-const MIN_TO_START = 2;
-// Vertical climb: the whole world scrolls DOWNWARD, faster over time. Stay on one
-// level and the floor carries you off the bottom — you must keep climbing up.
-const SCROLL_BASE = 0.55, SCROLL_RAMP = 0.05, SCROLL_MAX = 6.5;
-const PLAT_H = 16, GEN_ABOVE = 320; // keep platforms generated this far above the top edge
-const COLORS = ['#ff5252', '#ffb142', '#fffa65', '#32ff7e', '#18dcff',
-                '#7d5fff', '#ff4d97', '#cd6133', '#ffffff', '#badc58'];
+const TICK_MS = 1000 / 60;           // 60 ticks/sec; physics is tuned per-tick
+const BROADCAST_EVERY = 2;           // send a snapshot every 2 ticks (~30/sec)
 
-// =================== Rooms ===================
+const PW = 28, PH = 28;
+const GRAVITY = 0.72, MOVE_ACCEL = 0.95, MOVE_MAX = 5.6, FRICTION = 0.80;
+const JUMP_V = -15.2, MAX_FALL = 17;
+
+// Matchmaking
+const MATCH_SIZE = 8;                                       // target players per match
+const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // wait for humans, then fill with bots
+const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
+
+// Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
+const SCROLL_START = 26;    // px/sec at the start of a round
+const SCROLL_RAMP = 3.4;    // added px/sec for each second survived
+const SCROLL_MAX = 150;     // hardest scroll speed
+const PLAT_H = 16;
+const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
+const SPREAD = 300;                  // max horizontal shift between consecutive rungs
+
+const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
+                '#7d5fff', '#ff4d97', '#5ad1cd', '#ff9f43', '#badc58'];
+const BOT_NAMES = ['Riley', 'Max', 'Nova', 'Kai', 'Zoe', 'Leo', 'Mia', 'Finn',
+                   'Ivy', 'Jax', 'Luna', 'Ace', 'Remy', 'Sky', 'Theo', 'Wren',
+                   'Echo', 'Bolt', 'Pixel', 'Dash'];
+
+// =================== Matchmaking / rooms ===================
 const rooms = new Map();         // code -> room
-const allSessions = new Map();   // sessionId -> session
+const allSessions = new Map();   // sessionId -> human session
 let nextSessionId = 1;
+let formingRoom = null;          // the room currently gathering players (or null)
 
 function genCode() {
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -126,235 +140,339 @@ function genCode() {
   while (rooms.has(c));
   return c;
 }
-function createRoom(hostSession, maxPlayers) {
-  const code = genCode();
-  const room = {
-    code, hostId: hostSession.id,
-    maxPlayers: Math.min(10, Math.max(2, maxPlayers || 8)),
-    members: new Map(),        // sessionId -> session
-    phase: 'waiting',          // waiting | countdown | playing | roundover
-    phaseTimer: 0, roundTime: 0, winnerName: null,
-    platforms: [], nextPlatId: 0, tick: 0,
-  };
-  rooms.set(code, room);
-  return room;
-}
 function newPlayer() {
   return { x: 0, y: 0, vx: 0, vy: 0, alive: false, spectator: true,
-           onPlatform: null, jumpHeld: false, color: '#fff',
+           onPlatform: null, jumpHeld: false, color: '#fff', placedAt: 0,
            input: { left: false, right: false, jump: false } };
 }
-function hostName(room) {
-  const h = room.members.get(room.hostId);
-  return h ? h.username : '—';
-}
-
-function joinRoom(s, room) {
-  if (room.members.size >= room.maxPlayers) return { error: 'That room is full.' };
-  s.room = room; s.ready = false; s.player = newPlayer();
-  // joining mid-game: wait as spectator until next round
-  if (room.phase !== 'waiting') { s.player.spectator = true; s.player.alive = false; }
-  room.members.set(s.id, s);
-  pushLobby();
-  return { ok: true };
-}
-function leaveRoom(s) {
-  const room = s.room;
-  if (!room) return;
-  room.members.delete(s.id);
-  s.room = null; s.player = null; s.ready = false;
-  if (room.members.size === 0) {
-    rooms.delete(room.code);
-  } else if (room.hostId === s.id) {
-    room.hostId = room.members.keys().next().value; // promote next member
-  }
-  pushLobby();
-}
-
-function makePlatform(room, x, y, w) {
-  return { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: (Math.random() - 0.5) * 1.4, dx: 0 };
-}
-function setupRound(room) {
-  room.roundTime = 0; room.winnerName = null; room.nextPlatId = 0; room.platforms = [];
-  // wide starting platform near the bottom so everyone has room to spawn
-  const base = { id: room.nextPlatId++, x: WORLD.w / 2 - 250, y: 520, w: 500, h: PLAT_H, vx: 0, dx: 0 };
-  room.platforms.push(base);
-  // build a ladder of platforms running up and off the top of the screen
-  let y = 520;
-  while (y > -GEN_ABOVE) {
-    y -= 95 + Math.random() * 55;                  // reachable vertical gap
-    const w = 110 + Math.random() * 110;           // 110-220 wide
-    const x = 40 + Math.random() * (WORLD.w - w - 80);
-    room.platforms.push(makePlatform(room, x, y, w));
-  }
-  // place players on the base platform, spread across it
-  let i = 0; const n = Math.max(room.members.size, 1);
-  for (const s of room.members.values()) {
-    const p = s.player;
-    p.spectator = false; p.alive = true; p.vx = 0; p.vy = 0;
-    p.onPlatform = base.id; p.jumpHeld = false; p.color = COLORS[i % COLORS.length];
-    p.x = base.x + 30 + (i + 0.5) * ((base.w - 60) / n) - PW / 2;
-    p.y = base.y - PH;
-    i++;
-  }
-}
-function startGame(room) {
-  if (room.phase !== 'waiting' || room.members.size < MIN_TO_START) return;
-  setupRound(room);
-  room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
-  pushLobby();
+function humanCount(room) {
+  let n = 0; for (const s of room.members.values()) if (!s.isBot) n++; return n;
 }
 function aliveList(room) {
   return [...room.members.values()].filter(s => s.player && s.player.alive && !s.player.spectator);
 }
-function scrollSpeed(room) {
-  return Math.min(SCROLL_MAX, SCROLL_BASE + room.roundTime * SCROLL_RAMP);
+
+function createRoom() {
+  const code = genCode();
+  const room = {
+    code, members: new Map(),
+    phase: 'matchmaking',                 // matchmaking | countdown | playing | roundover
+    fillTimer: MATCH_WAIT_S, phaseTimer: 0,
+    roundTime: 0, winnerName: null, scrollSpeed: SCROLL_START,
+    platforms: [], nextPlatId: 0, lastCenterX: WORLD.w / 2, tick: 0, eliminated: 0,
+  };
+  rooms.set(code, room);
+  return room;
 }
+
+function addToMatch(s) {
+  if (s.room) leaveMatch(s, true);
+  if (!formingRoom || formingRoom.phase !== 'matchmaking' || humanCount(formingRoom) >= MATCH_SIZE) {
+    formingRoom = createRoom();
+  }
+  const room = formingRoom;
+  s.room = room; s.player = newPlayer();
+  room.members.set(s.id, s);
+  sendSearch(room);
+  return room;
+}
+function leaveMatch(s, silent) {
+  const room = s.room;
+  if (!room) return;
+  room.members.delete(s.id);
+  s.room = null; s.player = null;
+  if (formingRoom === room && humanCount(room) === 0) formingRoom = null;
+  if (humanCount(room) === 0) { rooms.delete(room.code); }      // no humans -> drop match (and its bots)
+  else if (room.phase === 'matchmaking') sendSearch(room);
+  if (!silent) try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {}
+}
+
+// ---- bots ----
+function uniqueBotName(room) {
+  const taken = new Set([...room.members.values()].map(m => m.username.toLowerCase()));
+  const pool = BOT_NAMES.filter(n => !taken.has(n.toLowerCase()));
+  let name = (pool.length ? pool[Math.floor(Math.random() * pool.length)]
+                          : BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)]);
+  while (taken.has(name.toLowerCase())) name = name + (Math.floor(Math.random() * 90) + 10);
+  return name;
+}
+function makeBot(room) {
+  const bot = {
+    id: nextSessionId++, isBot: true, username: uniqueBotName(room),
+    conn: { send() {} }, room, player: newPlayer(),
+    ai: { skill: 0.8 + Math.random() * 0.2, jitter: (Math.random() - 0.5) * 10, retargetIn: 0, target: null },
+  };
+  room.members.set(bot.id, bot);
+  return bot;
+}
+function fillWithBots(room) {
+  while (room.members.size < MATCH_SIZE) makeBot(room);
+}
+
+// =================== Level (climb-or-die) ===================
+function reachableX(room, width) {
+  // Keep each new rung within a jump's horizontal reach of the previous one.
+  let cx = room.lastCenterX + (Math.random() * 2 - 1) * SPREAD;
+  cx = Math.max(width / 2 + 8, Math.min(WORLD.w - width / 2 - 8, cx));
+  room.lastCenterX = cx;
+  return cx - width / 2;
+}
+function makePlatform(room, y, width, moving) {
+  const w = width != null ? width : 110 + Math.floor(Math.random() * 80);
+  const x = reachableX(room, w);
+  const drift = moving ? (0.5 + Math.random() * 1.1) * (Math.random() < 0.5 ? -1 : 1) : 0;
+  return { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: drift, dx: 0 };
+}
+function setupRound(room) {
+  room.roundTime = 0; room.winnerName = null; room.scrollSpeed = SCROLL_START;
+  room.platforms = []; room.nextPlatId = 0; room.lastCenterX = WORLD.w / 2; room.eliminated = 0;
+
+  // Wide starting platform near the bottom so everyone has a clear place to begin.
+  const base = { id: room.nextPlatId++, x: WORLD.w / 2 - 200, y: WORLD.h - 96, w: 400, h: PLAT_H, vx: 0, dx: 0 };
+  room.platforms.push(base);
+  room.lastCenterX = WORLD.w / 2;
+
+  // Build a stack of rungs upward (and a buffer above the screen) to climb.
+  let y = base.y;
+  let idx = 0;
+  while (y > -160) {
+    y -= GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN);
+    const moving = idx >= 2 && Math.random() < 0.45;   // first couple rungs static, then some move
+    room.platforms.push(makePlatform(room, y, null, moving));
+    idx++;
+  }
+
+  // Place every player neatly along the starting platform.
+  const members = [...room.members.values()];
+  const n = members.length;
+  members.forEach((s, i) => {
+    const p = s.player;
+    p.spectator = false; p.alive = true; p.vx = 0; p.vy = 0;
+    p.onPlatform = base.id; p.jumpHeld = false; p.color = COLORS[i % COLORS.length];
+    p.placedAt = 0;
+    const slot = n > 1 ? (base.w - 60) * (i / (n - 1)) : (base.w - 60) / 2;
+    p.x = base.x + 30 + slot - PW / 2;
+    p.y = base.y - PH;
+    if (s.isBot) { s.ai.target = null; s.ai.retargetIn = 0; }
+  });
+}
+
+function topPlatformY(room) {
+  let m = Infinity; for (const p of room.platforms) if (p.y < m) m = p.y;
+  return m;
+}
+
 function stepPhysics(room) {
-  const scroll = scrollSpeed(room);
-  // platforms drift sideways and scroll DOWN
+  const scrollPx = room.scrollSpeed / 60;   // per-tick downward slide
+
+  // Move platforms: slide down + gentle horizontal drift.
   for (const p of room.platforms) {
     const oldX = p.x;
-    p.x += p.vx;
-    if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
-    if (p.x + p.w >= WORLD.w) { p.x = WORLD.w - p.w; p.vx = -Math.abs(p.vx); }
+    p.y += scrollPx;
+    if (p.vx) {
+      p.x += p.vx;
+      if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
+      if (p.x + p.w >= WORLD.w) { p.x = WORLD.w - p.w; p.vx = -Math.abs(p.vx); }
+    }
     p.dx = p.x - oldX;
-    p.y += scroll;
   }
-  // keep generating fresh platforms above the top edge
-  let minY = Infinity;
-  for (const p of room.platforms) if (p.y < minY) minY = p.y;
-  while (minY > -GEN_ABOVE) {
-    minY -= 95 + Math.random() * 55;
-    const w = 110 + Math.random() * 110;
-    const x = 40 + Math.random() * (WORLD.w - w - 80);
-    room.platforms.push(makePlatform(room, x, minY, w));
+  // Recycle platforms that slid off the bottom by adding fresh ones up top (endless climb).
+  room.platforms = room.platforms.filter(p => p.y < WORLD.h + 60);
+  while (topPlatformY(room) > -160) {
+    const y = topPlatformY(room) - (GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN));
+    room.platforms.push(makePlatform(room, y, null, Math.random() < 0.5));
   }
-  // drop platforms that scrolled off the bottom
-  room.platforms = room.platforms.filter(p => p.y < WORLD.h + 80);
 
   for (const s of room.members.values()) {
     const p = s.player;
     if (!p || !p.alive || p.spectator) continue;
-    const wantJump = p.input.jump && !p.jumpHeld;
-    p.jumpHeld = p.input.jump;
-    // horizontal control
+
+    // Carried by the platform you're standing on (down-scroll + drift).
+    if (p.onPlatform != null) {
+      const plat = room.platforms.find(pl => pl.id === p.onPlatform);
+      if (plat) { p.x += plat.dx; p.y += scrollPx; }
+    }
+
     if (p.input.left) p.vx -= MOVE_ACCEL;
     if (p.input.right) p.vx += MOVE_ACCEL;
     if (!p.input.left && !p.input.right) p.vx *= FRICTION;
     p.vx = Math.max(-MOVE_MAX, Math.min(MOVE_MAX, p.vx));
 
-    const plat = p.onPlatform != null ? room.platforms.find(pl => pl.id === p.onPlatform) : null;
-    if (plat && !wantJump) {
-      // standing: the platform carries you down with it (staying put is fatal)
-      p.x += p.vx + plat.dx;
-      p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
-      p.y = plat.y - PH;
-      p.vy = 0;
-      const stillOn = p.x + PW > plat.x + 2 && p.x < plat.x + plat.w - 2;
-      if (!stillOn) p.onPlatform = null; // walked off the edge
-    } else {
-      // airborne (or jumping off this tick)
-      if (plat && wantJump) { p.vy = JUMP_V; p.onPlatform = null; }
-      p.x += p.vx;
-      p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
-      const oldBottom = p.y + PH;
-      p.vy = Math.min(MAX_FALL, p.vy + GRAVITY);
-      p.y += p.vy;
-      const newBottom = p.y + PH;
-      if (p.vy > 0) {
-        for (const pl of room.platforms) {
-          const overlapX = p.x + PW > pl.x + 2 && p.x < pl.x + pl.w - 2;
-          if (overlapX && oldBottom <= pl.y + 10 && newBottom >= pl.y) {
-            p.y = pl.y - PH; p.vy = 0; p.onPlatform = pl.id; break;
-          }
+    const onGround = p.onPlatform != null;
+    if (p.input.jump && !p.jumpHeld && onGround) p.vy = JUMP_V;
+    p.jumpHeld = p.input.jump;
+
+    p.x += p.vx;
+    p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
+
+    const oldBottom = p.y + PH;
+    p.vy = Math.min(MAX_FALL, p.vy + GRAVITY);
+    p.y += p.vy;
+    const newBottom = p.y + PH;
+
+    p.onPlatform = null;
+    if (p.vy >= 0) {
+      for (const plat of room.platforms) {
+        const overlapX = p.x + PW > plat.x + 3 && p.x < plat.x + plat.w - 3;
+        if (overlapX && oldBottom <= plat.y + 10 && newBottom >= plat.y) {
+          p.y = plat.y - PH; p.vy = 0; p.onPlatform = plat.id; break;
         }
       }
     }
-    // fell below the bottom of the screen -> eliminated
-    if (p.y > WORLD.h) { p.alive = false; p.spectator = true; p.onPlatform = null; }
+
+    // Death: pushed to (or fallen past) the very bottom.
+    if (p.y + PH >= WORLD.h) { p.alive = false; p.spectator = true; room.eliminated++; }
   }
 }
+
+// =================== Bot AI (competitive) ===================
+function botThink(room, bot) {
+  const p = bot.player;
+  if (!p.alive || p.spectator) { p.input.left = p.input.right = p.input.jump = false; return; }
+  const feet = p.y + PH, cx = p.x + PW / 2;
+
+  // Choose the next rung up: the lowest platform whose top is above our feet but within a jump.
+  let best = null, bestScore = Infinity;
+  for (const plat of room.platforms) {
+    const above = plat.y < feet - 4;
+    const reach = plat.y > p.y - 165;       // within jump height
+    if (!above || !reach) continue;
+    const platCx = plat.x + plat.w / 2;
+    const dx = Math.abs(platCx - cx);
+    // Prefer the closest rung up, lightly penalising big horizontal gaps.
+    const score = (feet - plat.y) + dx * 0.45;
+    if (score < bestScore) { bestScore = score; best = plat; }
+  }
+  // Fallback: nearest platform of any kind (shouldn't normally happen).
+  if (!best) {
+    for (const plat of room.platforms) {
+      const platCx = plat.x + plat.w / 2;
+      const dx = Math.abs(platCx - cx);
+      if (dx < bestScore) { bestScore = dx; best = plat; }
+    }
+  }
+
+  let goX = cx;
+  if (best) {
+    // Aim a touch ahead of a moving platform, plus a little per-bot jitter.
+    goX = best.x + best.w / 2 + best.vx * 14 + bot.ai.jitter;
+  }
+  const dx = goX - cx;
+  const dead = 6;
+  p.input.left = dx < -dead;
+  p.input.right = dx > dead;
+
+  const onGround = p.onPlatform != null;
+  const inDanger = feet > WORLD.h * 0.66;            // floor catching up — jump now
+  const aligned = best && Math.abs(dx) < best.w / 2 + 6;
+  const wantJump = onGround && ((aligned && best && best.y < feet - 6) || inDanger);
+  p.input.jump = wantJump && !p.jumpHeld;
+}
+
+// =================== Match flow ===================
+function startMatch(room) {
+  fillWithBots(room);
+  setupRound(room);
+  room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
+  if (formingRoom === room) formingRoom = null;
+  broadcastRoom(room);
+}
 function updateRoom(room, dt) {
-  if (room.phase === 'waiting') {
-    if (room.members.size >= room.maxPlayers) startGame(room); // auto-start when full
-  } else if (room.phase === 'countdown') {
-    if (room.members.size < MIN_TO_START) { room.phase = 'waiting'; pushLobby(); return; }
+  if (room.phase === 'matchmaking') {
+    if (humanCount(room) === 0) { rooms.delete(room.code); if (formingRoom === room) formingRoom = null; return; }
+    room.fillTimer -= dt;
+    if (room.members.size >= MATCH_SIZE || room.fillTimer <= 0) startMatch(room);
+    return;
+  }
+  if (humanCount(room) === 0) { rooms.delete(room.code); if (formingRoom === room) formingRoom = null; return; }
+
+  if (room.phase === 'countdown') {
     room.phaseTimer -= dt;
     if (room.phaseTimer <= 0) { room.phase = 'playing'; room.roundTime = 0; }
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
+    room.scrollSpeed = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
+    for (const s of room.members.values()) if (s.isBot) botThink(room, s);
     stepPhysics(room);
     const alive = aliveList(room);
     if (alive.length <= 1) {
       room.winnerName = alive.length === 1 ? alive[0].username : null;
       room.phase = 'roundover'; room.phaseTimer = ROUNDOVER_S;
-      pushLobby();
+      broadcastRoom(room);
     }
   } else if (room.phase === 'roundover') {
     room.phaseTimer -= dt;
     if (room.phaseTimer <= 0) {
-      for (const s of room.members.values()) { if (s.player) { s.player.alive = false; s.player.spectator = true; } }
-      room.phase = 'waiting';
-      pushLobby();
+      // Send humans home; the match (and its bots) dissolves.
+      for (const s of room.members.values()) {
+        if (!s.isBot) { s.room = null; s.player = null; try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {} }
+      }
+      rooms.delete(room.code);
+      if (formingRoom === room) formingRoom = null;
     }
   }
 }
 
+// =================== Snapshots ===================
+function memberList(room) {
+  return [...room.members.values()].map(s => ({
+    name: s.username, bot: !!s.isBot,
+    color: s.player ? s.player.color : '#fff',
+    alive: !!(s.player && s.player.alive),
+  }));
+}
+function sendSearch(room) {
+  const msg = JSON.stringify({
+    t: 'searching',
+    found: humanCount(room), bots: room.members.size - humanCount(room),
+    target: MATCH_SIZE, secs: Math.max(0, Math.ceil(room.fillTimer)),
+    members: memberList(room),
+  });
+  for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
+}
 function roomSnapshot(room) {
   const snap = {
-    t: 'snapshot',
-    code: room.code, host: hostName(room), maxPlayers: room.maxPlayers,
-    phase: room.phase, countdown: Math.max(0, Math.ceil(room.phaseTimer)),
+    t: 'snapshot', code: room.code, phase: room.phase,
+    countdown: Math.max(0, Math.ceil(room.phaseTimer)),
     roundTime: Math.floor(room.roundTime), winner: room.winnerName,
-    alive: aliveList(room).length, minToStart: MIN_TO_START,
-    members: [...room.members.values()].map(s => ({
-      username: s.username, color: s.player ? s.player.color : '#fff',
-      ready: !!s.ready, alive: !!(s.player && s.player.alive),
-      isHost: s.id === room.hostId,
-    })),
-  };
-  if (room.phase !== 'waiting') {
-    snap.platforms = room.platforms.map(p => ({ x: Math.round(p.x), y: p.y, w: p.w, h: p.h }));
-    snap.players = [...room.members.values()].map(s => ({
-      id: s.username, name: s.username, color: s.player.color,
+    alive: aliveList(room).length, total: room.members.size,
+    scroll: Math.round(room.scrollSpeed),
+    platforms: room.platforms.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
+    players: [...room.members.values()].map(s => ({
+      id: s.username, name: s.username, color: s.player.color, bot: !!s.isBot,
       x: Math.round(s.player.x), y: Math.round(s.player.y),
       alive: s.player.alive, spectator: s.player.spectator, vx: Math.round(s.player.vx),
-    }));
-  }
+    })),
+  };
   return JSON.stringify(snap);
 }
 function broadcastRoom(room) {
+  if (room.phase === 'matchmaking') { sendSearch(room); return; }
   const msg = roomSnapshot(room);
-  for (const s of room.members.values()) s.conn.send(msg);
-}
-function publicRoomList() {
-  return [...rooms.values()].map(r => ({
-    code: r.code, host: hostName(r), players: r.members.size, max: r.maxPlayers, phase: r.phase,
-  }));
-}
-function pushLobby() {
-  const msg = JSON.stringify({ t: 'rooms', list: publicRoomList() });
-  for (const s of allSessions.values()) if (s.username && !s.room) s.conn.send(msg);
+  for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
 }
 
 // =================== Game loop ===================
 let last = Date.now();
 setInterval(() => {
   const now = Date.now();
-  const dt = (now - last) / 1000;
+  const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  for (const room of rooms.values()) {
-    if (room.members.size === 0) { rooms.delete(room.code); continue; }
+  for (const room of [...rooms.values()]) {
     updateRoom(room, dt);
+    if (!rooms.has(room.code)) continue;     // dissolved this tick
     room.tick++;
-    if (room.tick % BROADCAST_EVERY === 0) broadcastRoom(room);
+    if (room.phase === 'matchmaking') {
+      if (room.tick % 30 === 0) sendSearch(room);   // ~2x/sec so the countdown ticks live
+    } else if (room.tick % BROADCAST_EVERY === 0) {
+      broadcastRoom(room);
+    }
   }
 }, TICK_MS);
 
 // =================== Connections ===================
 ws.attach(server, (conn) => {
-  const s = { id: nextSessionId++, conn, username: null, key: null, room: null, player: null, ready: false };
+  const s = { id: nextSessionId++, conn, username: null, key: null, room: null, player: null, isBot: false };
   allSessions.set(s.id, s);
 
   conn.on('message', (raw) => {
@@ -367,8 +485,6 @@ ws.attach(server, (conn) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
         s.username = u.username; s.key = key;
         conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits }));
-        pushLobby();
-        conn.send(JSON.stringify({ t: 'rooms', list: publicRoomList() }));
       }).catch((e) => {
         console.error('auth lookup failed:', e.message);
         conn.send(JSON.stringify({ t: 'authfail' }));
@@ -377,28 +493,10 @@ ws.attach(server, (conn) => {
     }
     if (!s.username) return; // everything below requires auth
 
-    if (m.t === 'createRoom') {
-      if (s.room) leaveRoom(s);
-      const room = createRoom(s, m.maxPlayers);
-      joinRoom(s, room);
-    } else if (m.t === 'joinRoom') {
-      const room = rooms.get(String(m.code || '').toUpperCase());
-      if (!room) { conn.send(JSON.stringify({ t: 'error', msg: 'No room with that code.' })); return; }
-      if (s.room) leaveRoom(s);
-      const r = joinRoom(s, room);
-      if (r.error) conn.send(JSON.stringify({ t: 'error', msg: r.error }));
-    } else if (m.t === 'quickPlay') {
-      if (s.room) leaveRoom(s);
-      let room = [...rooms.values()].find(r => r.phase === 'waiting' && r.members.size < r.maxPlayers);
-      if (!room) room = createRoom(s, 8);
-      joinRoom(s, room);
-    } else if (m.t === 'leaveRoom') {
-      leaveRoom(s);
-      conn.send(JSON.stringify({ t: 'left' }));
-    } else if (m.t === 'ready') {
-      s.ready = !!m.value;
-    } else if (m.t === 'startGame') {
-      if (s.room && s.id === s.room.hostId) startGame(s.room);
+    if (m.t === 'findMatch') {
+      addToMatch(s);
+    } else if (m.t === 'leaveMatch') {
+      leaveMatch(s, false);
     } else if (m.t === 'input') {
       if (s.room && s.player && s.room.phase === 'playing') {
         s.player.input.left = !!m.left;
@@ -409,7 +507,7 @@ ws.attach(server, (conn) => {
   });
 
   conn.on('close', () => {
-    leaveRoom(s);
+    leaveMatch(s, true);
     allSessions.delete(s.id);
   });
 });
@@ -417,5 +515,8 @@ ws.attach(server, (conn) => {
 server.listen(PORT, () => {
   console.log('Last Man Standing running at  http://localhost:' + PORT);
   console.log('Accounts storage: ' + (store.backend === 'supabase' ? 'Supabase (Postgres)' : 'local file (data/users.json)'));
-  console.log('Create an account, make a room, share the 4-letter code (or open more tabs) to play.');
+  console.log('Sign in, hit Find Match — bots fill any empty slots so a game always starts.');
 });
+
+// Exported for the automated tests.
+module.exports = { server };
