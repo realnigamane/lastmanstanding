@@ -44,6 +44,23 @@ async function sbUpdateCredits(key, credits) {
   if (!r.ok) throw new Error('Supabase updateCredits ' + r.status + ': ' + (await r.text()));
 }
 
+async function sbRecordWin(key) {
+  const u = await sbGetUser(key);
+  const wins = ((u && u.wins) || 0) + 1;
+  const r = await fetch(SB_URL + '/rest/v1/' + TABLE + '?username_lower=eq.' + encodeURIComponent(key), {
+    method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify({ wins }),
+  });
+  if (!r.ok) throw new Error('Supabase recordWin ' + r.status + ': ' + (await r.text()));
+  return wins;
+}
+async function sbCreateWithdrawal(key, amount) {
+  const r = await fetch(SB_URL + '/rest/v1/withdrawal_requests', {
+    method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }),
+    body: JSON.stringify({ username_lower: key, amount: amount }),
+  });
+  if (!r.ok) throw new Error('Supabase createWithdrawal ' + r.status + ': ' + (await r.text()));
+}
+
 // ---------------- Local file backend ----------------
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
@@ -61,7 +78,18 @@ async function fileCreateUser(u) {
 async function fileUpdateCredits(key, credits) {
   if (users[key]) { users[key].credits = credits; saveUsers(); }
 }
+async function fileRecordWin(key) {
+  if (users[key]) { users[key].wins = (users[key].wins || 0) + 1; saveUsers(); return users[key].wins; }
+  return 0;
+}
+const WITHDRAW_FILE = path.join(DATA_DIR, 'withdrawals.json');
+let withdrawals = [];
+try { withdrawals = JSON.parse(fs.readFileSync(WITHDRAW_FILE, 'utf8')); } catch (e) { withdrawals = []; }
+async function fileCreateWithdrawal(key, amount) {
+  withdrawals.push({ username_lower: key, amount: amount, status: 'pending', created_at: new Date().toISOString() });
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(WITHDRAW_FILE, JSON.stringify(withdrawals, null, 2)); } catch (e) {}
+}
 
 module.exports = useSupabase
-  ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits }
-  : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits };
+  ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits, recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal }
+  : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits, recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal };

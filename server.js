@@ -27,6 +27,13 @@ const store = require('./store');
 
 const PORT = process.env.PORT || 3000;
 
+// Rank tiers — a player's rank goes up every 5 wins.
+const RANKS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Grandmaster', 'Legend', 'Mythic', 'Duck God'];
+function rankFor(wins) {
+  const i = Math.min(RANKS.length - 1, Math.floor((wins || 0) / 5));
+  return { tier: RANKS[i], level: i + 1, toNext: i < RANKS.length - 1 ? (i + 1) * 5 - (wins || 0) : 0 };
+}
+
 // =================== Accounts ===================
 const sessionsByToken = new Map(); // token -> user key
 
@@ -42,7 +49,7 @@ async function registerUser(username, password) {
   if (await store.getUser(key)) return { error: 'That username is already taken.' };
   const salt = crypto.randomBytes(16).toString('hex');
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
-                 credits: 1000, created_at: new Date().toISOString() };
+                 credits: 1000, wins: 0, created_at: new Date().toISOString() };
   try { await store.createUser(user); }
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
   const token = makeToken(); sessionsByToken.set(token, key);
@@ -477,7 +484,11 @@ function updateRoom(room, dt) {
     stepHazards(room);
     const alive = aliveList(room);
     if (alive.length <= 1) {
-      room.winnerName = alive.length === 1 ? alive[0].username : null;
+      const winner = alive[0] || null;
+      room.winnerName = winner ? winner.username : null;
+      if (winner && !winner.isBot && winner.key) {
+        store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w) }; }).catch(e => console.error('recordWin failed:', e.message));
+      }
       room.phase = 'roundover'; room.phaseTimer = ROUNDOVER_S;
       broadcastRoom(room);
     }
@@ -486,7 +497,12 @@ function updateRoom(room, dt) {
     if (room.phaseTimer <= 0) {
       // Send humans home; the match (and its bots) dissolves.
       for (const s of room.members.values()) {
-        if (!s.isBot) { s.room = null; s.player = null; try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {} }
+        if (!s.isBot) {
+          const home = { t: 'home' };
+          if (s.wonStats) { home.wins = s.wonStats.wins; home.rank = s.wonStats.rank; home.won = true; s.wonStats = null; }
+          s.room = null; s.player = null;
+          try { s.conn.send(JSON.stringify(home)); } catch (e) {}
+        }
       }
       rooms.delete(room.code);
       if (formingRoom === room) formingRoom = null;
@@ -567,7 +583,7 @@ ws.attach(server, (conn) => {
       store.getUser(key).then((u) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
         s.username = u.username; s.key = key;
-        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits }));
+        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0) }));
       }).catch((e) => {
         console.error('auth lookup failed:', e.message);
         conn.send(JSON.stringify({ t: 'authfail' }));
@@ -586,6 +602,12 @@ ws.attach(server, (conn) => {
         s.player.input.right = !!m.right;
         s.player.input.jump = !!m.jump;
       }
+    } else if (m.t === 'requestWithdraw') {
+      const amt = Math.floor(Number(m.amount) || 0);
+      if (amt <= 0) { conn.send(JSON.stringify({ t: 'withdrawResult', error: 'Enter a valid amount.' })); return; }
+      store.createWithdrawal(s.key, amt).then(() => {
+        conn.send(JSON.stringify({ t: 'withdrawResult', ok: true, amount: amt }));
+      }).catch(e => { console.error('withdraw failed:', e.message); conn.send(JSON.stringify({ t: 'withdrawResult', error: 'Could not submit request.' })); });
     }
   });
 

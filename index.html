@@ -92,6 +92,22 @@
     background: rgba(20,26,49,.9); color: #cdd6ff; padding: 7px 14px; border-radius: 9px;
     font-size: 12px; z-index: 8; pointer-events: none; border: 1px solid #34406e; }
   @media (orientation: portrait) { body.touch.playing #rotatehint { display: block; } }
+
+  /* Dashboard */
+  .dash { width: min(560px, 96vw); display: flex; flex-direction: column; gap: 14px; }
+  .dash .card { text-align: left; }
+  .dash h2 { margin: 0 0 6px; font-size: 17px; }
+  .profile { display: flex; align-items: center; gap: 14px; }
+  .pduck { font-size: 40px; line-height: 1; }
+  .pinfo { flex: 1; min-width: 0; }
+  .pname { font-weight: 800; font-size: 19px; }
+  .prank { color: #ffd479; font-size: 13px; margin-top: 2px; }
+  .pcred { color: #9fffce; font-size: 13px; }
+  .profile button { padding: 9px 13px; font-size: 13px; }
+  .row2 { display: flex; gap: 14px; }
+  .row2 > .card { flex: 1; }
+  .dash input { margin-bottom: 8px; }
+  @media (max-width: 520px) { .row2 { flex-direction: column; } }
 </style>
 </head>
 <body>
@@ -113,18 +129,43 @@
     </div>
   </div>
 
-  <!-- HOME -->
+  <!-- HOME / DASHBOARD -->
   <div id="home" class="screen">
-    <div class="topbar">
-      <div class="who">👤 <span id="hmUser">—</span></div>
-      <div class="cred">💰 <span id="hmCredits">0</span> credits</div>
-    </div>
-    <div class="card">
-      <h1 style="font-size:22px">Ready to play?</h1>
-      <p class="sub">Hit Find Match and you'll be matched with other players and dropped straight into the action.</p>
-      <button id="btnFind" class="wide big" style="margin-bottom:12px">🎮 Find Match</button>
-      <button id="btnLogout" class="ghost wide">Log out</button>
-      <div id="hmResult" class="muted" style="margin-top:14px;min-height:18px"></div>
+    <div class="dash">
+      <div class="card profile">
+        <div class="pduck">🦆</div>
+        <div class="pinfo">
+          <div class="pname"><span id="hmUser">—</span></div>
+          <div class="prank">🏆 <span id="hmRank">Bronze</span> · <span id="hmWins">0</span> wins</div>
+          <div class="pcred">💰 <span id="hmCredits">0</span> credits</div>
+        </div>
+        <button id="btnLogout" class="ghost">Log out</button>
+      </div>
+
+      <div class="card">
+        <h2>Practice</h2>
+        <p class="sub" style="margin:0 0 12px">Free play to sharpen up before cash matches — no credits at stake.</p>
+        <button id="btnFind" class="wide big">🎮 Practice Match</button>
+        <button id="btnPaid" class="wide ghost" style="margin-top:10px" disabled>💵 Cash Match — coming soon</button>
+        <div id="hmResult" class="muted" style="margin-top:10px;min-height:18px"></div>
+      </div>
+
+      <div class="row2">
+        <div class="card">
+          <h2>Deposit</h2>
+          <p class="sub" style="margin:0 0 10px">Add credits with crypto.</p>
+          <input id="depAmt" type="number" min="1" placeholder="Amount (USD)" />
+          <button id="btnDeposit" class="wide">Deposit</button>
+          <div id="depMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+        </div>
+        <div class="card">
+          <h2>Withdraw</h2>
+          <p class="sub" style="margin:0 0 10px">Request a payout of your credits.</p>
+          <input id="wdAmt" type="number" min="1" placeholder="Amount (credits)" />
+          <button id="btnWithdraw" class="wide">Request withdrawal</button>
+          <div id="wdMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
     </div>
   </div>
 

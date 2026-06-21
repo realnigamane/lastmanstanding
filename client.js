@@ -41,6 +41,8 @@
       myUsername = m.username; myCredits = m.credits;
       $('hmUser').textContent = myUsername;
       $('hmCredits').textContent = myCredits;
+      if (m.rank) $('hmRank').textContent = m.rank.tier;
+      $('hmWins').textContent = m.wins != null ? m.wins : 0;
       showScreen('home');
     } else if (m.t === 'authfail') {
       localStorage.removeItem('lms_token');
@@ -56,9 +58,13 @@
       const result = snap && snap.winner
         ? (snap.winner === myUsername ? '🏆 You won the last match!' : 'Winner: ' + snap.winner)
         : '';
+      if (m.wins != null) $('hmWins').textContent = m.wins;
+      if (m.rank) $('hmRank').textContent = m.rank.tier;
       snap = null; render.clear(); haz.length = 0;
       $('hmResult').textContent = result;
       showScreen('home');
+    } else if (m.t === 'withdrawResult') {
+      $('wdMsg').textContent = m.ok ? ('✓ Requested ' + m.amount + ' credits — pending review') : (m.error || 'Could not submit.');
     }
   }
 
@@ -97,9 +103,16 @@
   $('auPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('auPass').focus(); });
 
-  // ---------- Home ----------
+  // ---------- Home / dashboard ----------
   $('btnFind').onclick = () => { $('hmResult').textContent = ''; sendWS({ t: 'findMatch' }); };
   $('btnLogout').onclick = () => { localStorage.removeItem('lms_token'); location.reload(); };
+  $('btnDeposit').onclick = () => { $('depMsg').textContent = 'Crypto deposits are coming soon — not enabled yet.'; };
+  $('btnWithdraw').onclick = () => {
+    const amt = parseInt($('wdAmt').value, 10);
+    if (!amt || amt <= 0) { $('wdMsg').textContent = 'Enter a valid amount.'; return; }
+    $('wdMsg').textContent = 'Submitting…';
+    sendWS({ t: 'requestWithdraw', amount: amt });
+  };
 
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
