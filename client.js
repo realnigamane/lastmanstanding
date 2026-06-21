@@ -8,7 +8,10 @@
   let myUsername = null, myCredits = 0;
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
-  const render = new Map();        // id -> {x,y} interpolated positions
+  const render = new Map();        // id -> {x,y} interpolated player positions
+  const haz = [];                  // interpolated hazard positions
+  let shake = 0;                   // screen-shake amount (decays)
+  const stars = [];                // decorative parallax starfield
 
   // ---------- Screens ----------
   const screens = ['auth', 'home', 'searching', 'game'];
@@ -48,13 +51,12 @@
       if (curScreen !== 'searching') showScreen('searching');
     } else if (m.t === 'snapshot') {
       snap = m;
-      if (curScreen !== 'game') { render.clear(); showScreen('game'); }
+      if (curScreen !== 'game') { render.clear(); haz.length = 0; showScreen('game'); }
     } else if (m.t === 'home') {
-      // match ended or queue left
       const result = snap && snap.winner
         ? (snap.winner === myUsername ? '🏆 You won the last match!' : 'Winner: ' + snap.winner)
         : '';
-      snap = null; render.clear();
+      snap = null; render.clear(); haz.length = 0;
       $('hmResult').textContent = result;
       showScreen('home');
     }
@@ -162,22 +164,52 @@
 
   // ---------- Rendering ----------
   const lerp = (a, b, t) => a + (b - a) * t;
+
+  function initStars() {
+    for (let i = 0; i < 80; i++) stars.push({ x: Math.random() * W, y: Math.random() * H, z: 0.4 + Math.random() * 1.0 });
+  }
+  function drawStars() {
+    const sp = (snap && snap.scroll ? snap.scroll : 30);
+    for (const s of stars) {
+      s.y += (s.z * sp) / 520;
+      if (s.y > H) { s.y -= H; s.x = Math.random() * W; }
+      ctx.globalAlpha = 0.12 + s.z * 0.35;
+      ctx.fillStyle = '#aab6ff';
+      ctx.fillRect(s.x, s.y, s.z * 1.8, s.z * 1.8);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function draw() {
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || !snap || !snap.platforms) return;
-    ctx.clearRect(0, 0, W, H);
 
-    // Rising danger floor at the bottom — fall here and you're out.
+    ctx.save();
+    if (shake > 0) {
+      const m = shake * 7;
+      ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
+      shake = Math.max(0, shake - 0.06);
+    }
+    ctx.clearRect(-30, -30, W + 60, H + 60);
+    drawStars();
+
+    // rising danger floor
     const dg = ctx.createLinearGradient(0, H - 80, 0, H);
     dg.addColorStop(0, 'rgba(255,60,80,0)');
     dg.addColorStop(1, 'rgba(255,40,70,0.42)');
     ctx.fillStyle = dg; ctx.fillRect(0, H - 80, W, 80);
 
+    // platforms (with glow)
     for (const p of snap.platforms) {
       if (p.y < -p.h || p.y > H) continue;
+      ctx.save();
+      ctx.shadowColor = 'rgba(99,120,255,0.55)'; ctx.shadowBlur = 10;
       ctx.fillStyle = '#46508c'; roundRect(p.x, p.y, p.w, p.h, 6);
+      ctx.restore();
       ctx.fillStyle = '#6b78cf'; ctx.fillRect(p.x + 3, p.y + 2, p.w - 6, 3);
     }
+
+    // players
     for (const pl of snap.players) {
       let r = render.get(pl.id);
       if (!r) { r = { x: pl.x, y: pl.y }; render.set(pl.id, r); }
@@ -187,10 +219,40 @@
     }
     for (const id of [...render.keys()]) if (!snap.players.find(p => p.id === id)) render.delete(id);
 
+    drawHazards();
+
+    // local-player got knocked -> flash + shake
+    const me = snap.players.find(p => p.id === myUsername);
+    if (me && me.hit) { shake = Math.max(shake, 1); ctx.fillStyle = 'rgba(255,40,60,0.20)'; ctx.fillRect(0, 0, W, H); }
+
     drawHUD(); drawPhaseOverlay();
+    ctx.restore();
   }
+
+  function drawHazards() {
+    if (!snap.hazards) return;
+    for (let i = 0; i < snap.hazards.length; i++) {
+      const b = snap.hazards[i];
+      let h = haz[i]; if (!h) { h = { x: b.x, y: b.y }; haz[i] = h; }
+      if (Math.abs(b.x - h.x) > 120 || Math.abs(b.y - h.y) > 120) { h.x = b.x; h.y = b.y; }
+      else { h.x = lerp(h.x, b.x, 0.5); h.y = lerp(h.y, b.y, 0.5); }
+      const g = ctx.createRadialGradient(h.x, h.y, 2, h.x, h.y, b.r * 2.3);
+      g.addColorStop(0, 'rgba(255,214,128,0.9)');
+      g.addColorStop(0.5, 'rgba(255,120,60,0.45)');
+      g.addColorStop(1, 'rgba(255,80,40,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(h.x, h.y, b.r * 2.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff9f2e'; ctx.beginPath(); ctx.arc(h.x, h.y, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.beginPath(); ctx.arc(h.x - b.r * 0.3, h.y - b.r * 0.3, b.r * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+    haz.length = snap.hazards.length;
+  }
+
   function drawPlayer(x, y, pl) {
     const s = 28, cx = x + s / 2, cy = y + s / 2, r = 13;
+    // soft shadow
+    ctx.globalAlpha = pl.spectator ? 0.1 : 0.28;
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(cx, y + s + 2, 11, 3.5, 0, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = pl.spectator ? 0.18 : 1;
     const dir = pl.vx < -0.4 ? -1 : pl.vx > 0.4 ? 1 : 0;
     // feet
@@ -200,6 +262,8 @@
     // round body
     ctx.fillStyle = pl.color;
     ctx.beginPath(); ctx.arc(cx, cy - 1, r, 0, Math.PI * 2); ctx.fill();
+    // hit ring
+    if (pl.hit) { ctx.strokeStyle = '#ff5a72'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy - 1, r + 3, 0, Math.PI * 2); ctx.stroke(); }
     // highlight
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.beginPath(); ctx.arc(cx - 4, cy - 6, 5, 0, Math.PI * 2); ctx.fill();
@@ -207,7 +271,7 @@
     ctx.fillStyle = 'rgba(255,120,150,0.55)';
     ctx.beginPath(); ctx.ellipse(cx - 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(cx + 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
-    // eyes (look the way you're moving)
+    // eyes
     const ex = cx + dir * 2;
     ctx.fillStyle = '#1a2342';
     ctx.beginPath(); ctx.ellipse(ex - 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
@@ -216,7 +280,7 @@
     ctx.beginPath(); ctx.arc(ex - 4.6, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(ex + 3.4, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
-    // name (bots get a tiny tag)
+    // name
     ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = pl.id === myUsername ? '#9fffce' : '#c9d2ff';
     ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 5);
@@ -230,6 +294,9 @@
       if (snap.roundTime < 6) {
         ctx.textAlign = 'center'; ctx.fillStyle = '#9fffce'; ctx.font = 'bold 15px Segoe UI, sans-serif';
         ctx.fillText('Climb! The floor is rising — keep jumping up', W / 2, 26);
+      } else if (snap.roundTime < 11 && snap.hazards && snap.hazards.length) {
+        ctx.textAlign = 'center'; ctx.fillStyle = '#ffae42'; ctx.font = 'bold 15px Segoe UI, sans-serif';
+        ctx.fillText('Watch out — dodge the balls!', W / 2, 26);
       }
     }
   }
@@ -260,6 +327,7 @@
 
   // ---------- Boot ----------
   setAuthMode('login');
+  initStars();
   resizeCanvas();
   draw();
   connect();

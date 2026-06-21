@@ -121,6 +121,11 @@ const PLAT_H = 16;
 const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
 const SPREAD = 300;                  // max horizontal shift between consecutive rungs
 
+// Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
+const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
+const HAZARD_FIRST = 4, HAZARD_INTERVAL = 9, HAZARD_MAX = 3;
+const KNOCK_VY = -9.5, KNOCK_SHOVE = 24, KNOCK_INVULN = 0.5;
+
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
                 '#7d5fff', '#ff4d97', '#5ad1cd', '#ff9f43', '#badc58'];
 const BOT_NAMES = ['Riley', 'Max', 'Nova', 'Kai', 'Zoe', 'Leo', 'Mia', 'Finn',
@@ -142,7 +147,7 @@ function genCode() {
 }
 function newPlayer() {
   return { x: 0, y: 0, vx: 0, vy: 0, alive: false, spectator: true,
-           onPlatform: null, jumpHeld: false, color: '#fff', placedAt: 0,
+           onPlatform: null, jumpHeld: false, color: '#fff', placedAt: 0, invuln: 0, hit: false,
            input: { left: false, right: false, jump: false } };
 }
 function humanCount(room) {
@@ -160,6 +165,7 @@ function createRoom() {
     fillTimer: MATCH_WAIT_S, phaseTimer: 0,
     roundTime: 0, winnerName: null, scrollSpeed: SCROLL_START,
     platforms: [], nextPlatId: 0, lastCenterX: WORLD.w / 2, tick: 0, eliminated: 0,
+    hazards: [], nextHazardAt: HAZARD_FIRST,
   };
   rooms.set(code, room);
   return room;
@@ -226,6 +232,7 @@ function makePlatform(room, y, width, moving) {
 function setupRound(room) {
   room.roundTime = 0; room.winnerName = null; room.scrollSpeed = SCROLL_START;
   room.platforms = []; room.nextPlatId = 0; room.lastCenterX = WORLD.w / 2; room.eliminated = 0;
+  room.hazards = []; room.nextHazardAt = HAZARD_FIRST;
 
   // Wide starting platform near the bottom so everyone has a clear place to begin.
   const base = { id: room.nextPlatId++, x: WORLD.w / 2 - 200, y: WORLD.h - 96, w: 400, h: PLAT_H, vx: 0, dx: 0 };
@@ -249,7 +256,7 @@ function setupRound(room) {
     const p = s.player;
     p.spectator = false; p.alive = true; p.vx = 0; p.vy = 0;
     p.onPlatform = base.id; p.jumpHeld = false; p.color = COLORS[i % COLORS.length];
-    p.placedAt = 0;
+    p.placedAt = 0; p.invuln = 0; p.hit = false;
     const slot = n > 1 ? (base.w - 60) * (i / (n - 1)) : (base.w - 60) / 2;
     p.x = base.x + 30 + slot - PW / 2;
     p.y = base.y - PH;
@@ -286,6 +293,7 @@ function stepPhysics(room) {
   for (const s of room.members.values()) {
     const p = s.player;
     if (!p || !p.alive || p.spectator) continue;
+    if (p.invuln > 0) p.invuln = Math.max(0, p.invuln - 1 / 60); else p.hit = false;
 
     // Carried by the platform you're standing on (down-scroll + drift).
     if (p.onPlatform != null) {
@@ -322,6 +330,53 @@ function stepPhysics(room) {
 
     // Death: pushed to (or fallen past) the very bottom.
     if (p.y + PH >= WORLD.h) { p.alive = false; p.spectator = true; room.eliminated++; }
+  }
+}
+
+// =================== Hazards (bouncing balls) ===================
+function spawnHazard(room) {
+  room.hazards.push({
+    x: HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R),
+    y: -HAZARD_R - 10,
+    vx: (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1),
+    vy: 2 + Math.random() * 2, r: HAZARD_R,
+  });
+}
+function resetHazard(b) {
+  b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
+  b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 2;
+}
+function stepHazards(room) {
+  const scrollPx = room.scrollSpeed / 60;
+  for (const b of room.hazards) {
+    b.vy += HAZARD_GRAV;
+    b.x += b.vx;
+    b.y += b.vy + scrollPx;
+    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); }
+    if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx); }
+    if (b.y < b.r) { b.y = b.r; b.vy = Math.abs(b.vy) * 0.6; }
+    if (b.vy > 0) {
+      for (const plat of room.platforms) {
+        if (b.x + b.r > plat.x && b.x - b.r < plat.x + plat.w &&
+            b.y + b.r >= plat.y && b.y + b.r <= plat.y + plat.h + 14) {
+          b.y = plat.y - b.r; b.vy = HAZARD_BOUNCE * (0.85 + Math.random() * 0.3); break;
+        }
+      }
+    }
+    if (b.y - b.r > WORLD.h + 40) resetHazard(b);
+    for (const s of room.members.values()) {
+      const p = s.player;
+      if (!p || !p.alive || p.spectator || p.invuln > 0) continue;
+      const dx = (p.x + PW / 2) - b.x, dy = (p.y + PH / 2) - b.y;
+      const rad = b.r + PW / 2;
+      if (dx * dx + dy * dy < rad * rad) {
+        const dir = dx >= 0 ? 1 : -1;
+        p.x = Math.max(0, Math.min(WORLD.w - PW, p.x + dir * KNOCK_SHOVE));
+        p.vx = dir * MOVE_MAX; p.vy = KNOCK_VY; p.onPlatform = null;
+        p.invuln = KNOCK_INVULN; p.hit = true;
+        b.vx = dir * Math.abs(b.vx); b.vy = HAZARD_BOUNCE * 0.7;
+      }
+    }
   }
 }
 
@@ -392,8 +447,12 @@ function updateRoom(room, dt) {
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
     room.scrollSpeed = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
+    if (room.roundTime >= room.nextHazardAt && room.hazards.length < HAZARD_MAX) {
+      spawnHazard(room); room.nextHazardAt += HAZARD_INTERVAL;
+    }
     for (const s of room.members.values()) if (s.isBot) botThink(room, s);
     stepPhysics(room);
+    stepHazards(room);
     const alive = aliveList(room);
     if (alive.length <= 1) {
       room.winnerName = alive.length === 1 ? alive[0].username : null;
@@ -438,10 +497,12 @@ function roomSnapshot(room) {
     alive: aliveList(room).length, total: room.members.size,
     scroll: Math.round(room.scrollSpeed),
     platforms: room.platforms.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
+    hazards: room.hazards.map(b => ({ x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
     players: [...room.members.values()].map(s => ({
       id: s.username, name: s.username, color: s.player.color,
       x: Math.round(s.player.x), y: Math.round(s.player.y),
       alive: s.player.alive, spectator: s.player.spectator, vx: Math.round(s.player.vx),
+      hit: !!s.player.hit,
     })),
   };
   return JSON.stringify(snap);
