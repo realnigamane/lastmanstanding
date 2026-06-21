@@ -108,6 +108,8 @@
   .row2 > .card { flex: 1; }
   .dash input { margin-bottom: 8px; }
   @media (max-width: 520px) { .row2 { flex-direction: column; } }
+  /* Let the dashboard scroll when it's taller than the screen (esp. mobile) */
+  #home { justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding-top: 22px; padding-bottom: 44px; }
 </style>
 </head>
 <body>
