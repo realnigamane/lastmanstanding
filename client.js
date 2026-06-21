@@ -252,42 +252,33 @@
   }
 
   function drawPlayer(x, y, pl) {
-    const s = 28, cx = x + s / 2, cy = y + s / 2, r = 13;
+    const s = 28, cx = x + s / 2, cy = y + s / 2;
+    const dir = pl.vx < -0.4 ? -1 : 1;   // face the way you're moving (default right)
     // soft shadow
     ctx.globalAlpha = pl.spectator ? 0.1 : 0.28;
     ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.ellipse(cx, y + s + 2, 11, 3.5, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = pl.spectator ? 0.18 : 1;
-    const dir = pl.vx < -0.4 ? -1 : pl.vx > 0.4 ? 1 : 0;
-    // feet
-    ctx.fillStyle = '#e25b7a';
-    ctx.beginPath(); ctx.ellipse(cx - 7, y + s - 2, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx + 7, y + s - 2, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-    // round body
-    ctx.fillStyle = pl.color;
-    ctx.beginPath(); ctx.arc(cx, cy - 1, r, 0, Math.PI * 2); ctx.fill();
-    // hit ring
-    if (pl.hit) { ctx.strokeStyle = '#ff5a72'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy - 1, r + 3, 0, Math.PI * 2); ctx.stroke(); }
-    // highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.beginPath(); ctx.arc(cx - 4, cy - 6, 5, 0, Math.PI * 2); ctx.fill();
-    // blush cheeks
-    ctx.fillStyle = 'rgba(255,120,150,0.55)';
-    ctx.beginPath(); ctx.ellipse(cx - 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(cx + 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
-    // eyes
-    const ex = cx + dir * 2;
-    ctx.fillStyle = '#1a2342';
-    ctx.beginPath(); ctx.ellipse(ex - 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(ex + 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(ex - 4.6, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ex + 3.4, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx, y + s + 1, 10, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = pl.spectator ? 0.22 : 1;
+
+    // pixel duck — blocks in local coords, mirrored when facing left
+    const px = (gx, gy, w, h, col) => {
+      ctx.fillStyle = col;
+      const fx = dir >= 0 ? gx : -gx - w;
+      ctx.fillRect(Math.round(cx + fx), Math.round(cy + gy), w, h);
+    };
+    const body = pl.color, beak = '#ffae2e', foot = '#ff8a1e', eye = '#1a2342';
+    px(-6, 9, 3, 3, foot); px(0, 9, 3, 3, foot);          // feet
+    px(-10, 1, 17, 8, body); px(-8, -1, 14, 2, body); px(-9, 9, 14, 1, body); // body
+    px(2, -9, 9, 8, body); px(3, -11, 7, 2, body);        // head
+    px(-7, 2, 7, 4, 'rgba(0,0,0,0.16)');                  // wing shade
+    px(11, -6, 6, 3, beak); px(11, -3, 4, 2, beak);       // beak
+    px(6, -7, 3, 3, eye); px(7, -7, 1, 1, '#fff');        // eye + glint
+    if (pl.hit) { ctx.strokeStyle = '#ff5a72'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.stroke(); }
     ctx.globalAlpha = 1;
     // name
     ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = pl.id === myUsername ? '#9fffce' : '#c9d2ff';
-    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 5);
+    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 7);
   }
   function drawHUD() {
     ctx.textAlign = 'left'; ctx.font = 'bold 15px Segoe UI, sans-serif'; ctx.fillStyle = '#c9d2ff';
