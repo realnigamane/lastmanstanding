@@ -217,17 +217,23 @@
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || !snap || !snap.platforms) return;
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(255,80,80,0.06)';
-    ctx.fillRect(0, H - 26, W, 26);
+    // danger floor — fall down here and you're out
+    const dg = ctx.createLinearGradient(0, H - 60, 0, H);
+    dg.addColorStop(0, 'rgba(255,60,80,0)');
+    dg.addColorStop(1, 'rgba(255,40,70,0.35)');
+    ctx.fillStyle = dg; ctx.fillRect(0, H - 60, W, 60);
 
     for (const p of snap.platforms) {
+      if (p.y < -p.h || p.y > H) continue; // skip off-screen platforms
       ctx.fillStyle = '#46508c'; roundRect(p.x, p.y, p.w, p.h, 6);
-      ctx.fillStyle = '#5d68b8'; ctx.fillRect(p.x + 3, p.y + 2, p.w - 6, 3);
+      ctx.fillStyle = '#6b78cf'; ctx.fillRect(p.x + 3, p.y + 2, p.w - 6, 3);
     }
     for (const pl of snap.players) {
       let r = render.get(pl.id);
       if (!r) { r = { x: pl.x, y: pl.y }; render.set(pl.id, r); }
-      r.x = lerp(r.x, pl.x, 0.35); r.y = lerp(r.y, pl.y, 0.35);
+      // snap (don't glide) when a player teleports — new round / big move
+      if (Math.abs(pl.x - r.x) > 140 || Math.abs(pl.y - r.y) > 140) { r.x = pl.x; r.y = pl.y; }
+      else { r.x = lerp(r.x, pl.x, 0.4); r.y = lerp(r.y, pl.y, 0.4); }
       drawPlayer(r.x, r.y, pl);
     }
     for (const id of [...render.keys()]) if (!snap.players.find(p => p.id === id)) render.delete(id);
@@ -235,17 +241,35 @@
     drawHUD(); drawPhaseOverlay();
   }
   function drawPlayer(x, y, pl) {
-    const size = 30;
-    ctx.globalAlpha = pl.spectator ? 0.25 : 1;
-    ctx.fillStyle = pl.color; roundRect(x, y, size, size, 7);
-    const dir = pl.vx < -0.3 ? -1 : pl.vx > 0.3 ? 1 : 0;
-    ctx.fillStyle = '#0b0e1a';
-    const ex = x + 9 + dir * 3, ey = y + 11;
-    ctx.fillRect(ex, ey, 4, 5); ctx.fillRect(ex + 9, ey, 4, 5);
+    const s = 30, cx = x + s / 2, cy = y + s / 2, r = 14;
+    ctx.globalAlpha = pl.spectator ? 0.22 : 1;
+    const dir = pl.vx < -0.4 ? -1 : pl.vx > 0.4 ? 1 : 0;
+    // little feet
+    ctx.fillStyle = '#e25b7a';
+    ctx.beginPath(); ctx.ellipse(cx - 7, y + s - 3, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 7, y + s - 3, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    // round body
+    ctx.fillStyle = pl.color;
+    ctx.beginPath(); ctx.arc(cx, cy - 1, r, 0, Math.PI * 2); ctx.fill();
+    // soft highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.arc(cx - 4, cy - 6, 5, 0, Math.PI * 2); ctx.fill();
+    // blush cheeks
+    ctx.fillStyle = 'rgba(255,120,150,0.55)';
+    ctx.beginPath(); ctx.ellipse(cx - 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8, cy + 3, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+    // eyes look the way you're moving
+    const ex = cx + dir * 2;
+    ctx.fillStyle = '#1a2342';
+    ctx.beginPath(); ctx.ellipse(ex - 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(ex + 4, cy - 3, 2.4, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex - 4.6, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ex + 3.4, cy - 5, 1, 0, Math.PI * 2); ctx.fill();
     ctx.globalAlpha = 1;
     ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = pl.id === myUsername ? '#9fffce' : '#c9d2ff';
-    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, x + size / 2, y - 6);
+    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 5);
   }
   function drawHUD() {
     const total = snap.members.length;
@@ -260,6 +284,10 @@
       ctx.fillStyle = '#23284a'; ctx.fillRect(W - 174, 32, 160, 6);
       ctx.fillStyle = diff > .66 ? '#ff5252' : diff > .33 ? '#ffb142' : '#32ff7e';
       ctx.fillRect(W - 174, 32, 160 * diff, 6);
+      if (snap.roundTime < 6) {
+        ctx.textAlign = 'center'; ctx.fillStyle = '#9fffce'; ctx.font = 'bold 15px Segoe UI, sans-serif';
+        ctx.fillText('Climb! The floor is falling — keep jumping up', W / 2, 54);
+      }
     }
   }
   function drawPhaseOverlay() {

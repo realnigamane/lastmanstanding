@@ -103,10 +103,14 @@ const WORLD = { w: 960, h: 600 };
 const TICK_MS = 1000 / 60;
 const BROADCAST_EVERY = 2;
 const PW = 30, PH = 30;
-const GRAVITY_BASE = 0.75, MOVE_ACCEL = 0.9, MOVE_MAX = 5.2, FRICTION = 0.78;
-const JUMP_V = -15, MAX_FALL = 16;
+const GRAVITY = 0.62, MOVE_ACCEL = 0.9, MOVE_MAX = 5.4, FRICTION = 0.80;
+const JUMP_V = -15, MAX_FALL = 18;
 const COUNTDOWN_S = 4, ROUNDOVER_S = 6;
-const MIN_TO_START = 2, MIN_PLATFORMS = 2;
+const MIN_TO_START = 2;
+// Vertical climb: the whole world scrolls DOWNWARD, faster over time. Stay on one
+// level and the floor carries you off the bottom — you must keep climbing up.
+const SCROLL_BASE = 0.55, SCROLL_RAMP = 0.05, SCROLL_MAX = 6.5;
+const PLAT_H = 16, GEN_ABOVE = 320; // keep platforms generated this far above the top edge
 const COLORS = ['#ff5252', '#ffb142', '#fffa65', '#32ff7e', '#18dcff',
                 '#7d5fff', '#ff4d97', '#cd6133', '#ffffff', '#badc58'];
 
@@ -130,7 +134,7 @@ function createRoom(hostSession, maxPlayers) {
     members: new Map(),        // sessionId -> session
     phase: 'waiting',          // waiting | countdown | playing | roundover
     phaseTimer: 0, roundTime: 0, winnerName: null,
-    platforms: [], nextPlatRemoval: 0, tick: 0,
+    platforms: [], nextPlatId: 0, tick: 0,
   };
   rooms.set(code, room);
   return room;
@@ -167,26 +171,30 @@ function leaveRoom(s) {
   pushLobby();
 }
 
+function makePlatform(room, x, y, w) {
+  return { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: (Math.random() - 0.5) * 1.4, dx: 0 };
+}
 function setupRound(room) {
-  room.roundTime = 0; room.nextPlatRemoval = 8; room.winnerName = null;
-  const defs = [
-    { x: 120, y: 470, w: 200 }, { x: 620, y: 470, w: 200 },
-    { x: 380, y: 360, w: 200 }, { x: 90, y: 250, w: 170 },
-    { x: 700, y: 250, w: 170 }, { x: 400, y: 150, w: 160 },
-    { x: 250, y: 540, w: 460 },
-  ];
-  room.platforms = defs.map((d, i) => ({
-    id: i, x: d.x, y: d.y, w: d.w, h: 18,
-    baseSpeed: 0.6 + Math.random() * 0.8, dir: Math.random() < 0.5 ? -1 : 1, dx: 0,
-  }));
-  let i = 0;
+  room.roundTime = 0; room.winnerName = null; room.nextPlatId = 0; room.platforms = [];
+  // wide starting platform near the bottom so everyone has room to spawn
+  const base = { id: room.nextPlatId++, x: WORLD.w / 2 - 250, y: 520, w: 500, h: PLAT_H, vx: 0, dx: 0 };
+  room.platforms.push(base);
+  // build a ladder of platforms running up and off the top of the screen
+  let y = 520;
+  while (y > -GEN_ABOVE) {
+    y -= 95 + Math.random() * 55;                  // reachable vertical gap
+    const w = 110 + Math.random() * 110;           // 110-220 wide
+    const x = 40 + Math.random() * (WORLD.w - w - 80);
+    room.platforms.push(makePlatform(room, x, y, w));
+  }
+  // place players on the base platform, spread across it
+  let i = 0; const n = Math.max(room.members.size, 1);
   for (const s of room.members.values()) {
     const p = s.player;
     p.spectator = false; p.alive = true; p.vx = 0; p.vy = 0;
-    p.onPlatform = null; p.jumpHeld = false; p.color = COLORS[i % COLORS.length];
-    const plat = room.platforms[i % room.platforms.length];
-    p.x = plat.x + plat.w / 2 - PW / 2;
-    p.y = plat.y - PH - 1;
+    p.onPlatform = base.id; p.jumpHeld = false; p.color = COLORS[i % COLORS.length];
+    p.x = base.x + 30 + (i + 0.5) * ((base.w - 60) / n) - PW / 2;
+    p.y = base.y - PH;
     i++;
   }
 }
@@ -199,48 +207,72 @@ function startGame(room) {
 function aliveList(room) {
   return [...room.members.values()].filter(s => s.player && s.player.alive && !s.player.spectator);
 }
-function difficulty(room) {
-  return { speedMult: 1 + room.roundTime * 0.06, gravity: GRAVITY_BASE + room.roundTime * 0.004 };
+function scrollSpeed(room) {
+  return Math.min(SCROLL_MAX, SCROLL_BASE + room.roundTime * SCROLL_RAMP);
 }
 function stepPhysics(room) {
-  const { speedMult, gravity } = difficulty(room);
+  const scroll = scrollSpeed(room);
+  // platforms drift sideways and scroll DOWN
   for (const p of room.platforms) {
     const oldX = p.x;
-    p.x += p.baseSpeed * p.dir * speedMult;
-    if (p.x <= 0) { p.x = 0; p.dir = 1; }
-    if (p.x + p.w >= WORLD.w) { p.x = WORLD.w - p.w; p.dir = -1; }
+    p.x += p.vx;
+    if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
+    if (p.x + p.w >= WORLD.w) { p.x = WORLD.w - p.w; p.vx = -Math.abs(p.vx); }
     p.dx = p.x - oldX;
+    p.y += scroll;
   }
+  // keep generating fresh platforms above the top edge
+  let minY = Infinity;
+  for (const p of room.platforms) if (p.y < minY) minY = p.y;
+  while (minY > -GEN_ABOVE) {
+    minY -= 95 + Math.random() * 55;
+    const w = 110 + Math.random() * 110;
+    const x = 40 + Math.random() * (WORLD.w - w - 80);
+    room.platforms.push(makePlatform(room, x, minY, w));
+  }
+  // drop platforms that scrolled off the bottom
+  room.platforms = room.platforms.filter(p => p.y < WORLD.h + 80);
+
   for (const s of room.members.values()) {
     const p = s.player;
     if (!p || !p.alive || p.spectator) continue;
-    if (p.onPlatform != null) {
-      const plat = room.platforms.find(pl => pl.id === p.onPlatform);
-      if (plat) p.x += plat.dx;
-    }
+    const wantJump = p.input.jump && !p.jumpHeld;
+    p.jumpHeld = p.input.jump;
+    // horizontal control
     if (p.input.left) p.vx -= MOVE_ACCEL;
     if (p.input.right) p.vx += MOVE_ACCEL;
     if (!p.input.left && !p.input.right) p.vx *= FRICTION;
     p.vx = Math.max(-MOVE_MAX, Math.min(MOVE_MAX, p.vx));
-    const onGround = p.onPlatform != null;
-    if (p.input.jump && !p.jumpHeld && onGround) p.vy = JUMP_V;
-    p.jumpHeld = p.input.jump;
-    p.x += p.vx;
-    p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
-    const oldBottom = p.y + PH;
-    p.vy = Math.min(MAX_FALL, p.vy + gravity);
-    p.y += p.vy;
-    const newBottom = p.y + PH;
-    p.onPlatform = null;
-    if (p.vy >= 0) {
-      for (const plat of room.platforms) {
-        const overlapX = p.x + PW > plat.x + 3 && p.x < plat.x + plat.w - 3;
-        if (overlapX && oldBottom <= plat.y + 8 && newBottom >= plat.y) {
-          p.y = plat.y - PH; p.vy = 0; p.onPlatform = plat.id; break;
+
+    const plat = p.onPlatform != null ? room.platforms.find(pl => pl.id === p.onPlatform) : null;
+    if (plat && !wantJump) {
+      // standing: the platform carries you down with it (staying put is fatal)
+      p.x += p.vx + plat.dx;
+      p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
+      p.y = plat.y - PH;
+      p.vy = 0;
+      const stillOn = p.x + PW > plat.x + 2 && p.x < plat.x + plat.w - 2;
+      if (!stillOn) p.onPlatform = null; // walked off the edge
+    } else {
+      // airborne (or jumping off this tick)
+      if (plat && wantJump) { p.vy = JUMP_V; p.onPlatform = null; }
+      p.x += p.vx;
+      p.x = Math.max(0, Math.min(WORLD.w - PW, p.x));
+      const oldBottom = p.y + PH;
+      p.vy = Math.min(MAX_FALL, p.vy + GRAVITY);
+      p.y += p.vy;
+      const newBottom = p.y + PH;
+      if (p.vy > 0) {
+        for (const pl of room.platforms) {
+          const overlapX = p.x + PW > pl.x + 2 && p.x < pl.x + pl.w - 2;
+          if (overlapX && oldBottom <= pl.y + 10 && newBottom >= pl.y) {
+            p.y = pl.y - PH; p.vy = 0; p.onPlatform = pl.id; break;
+          }
         }
       }
     }
-    if (p.y > WORLD.h + 40) { p.alive = false; p.spectator = true; }
+    // fell below the bottom of the screen -> eliminated
+    if (p.y > WORLD.h) { p.alive = false; p.spectator = true; p.onPlatform = null; }
   }
 }
 function updateRoom(room, dt) {
@@ -253,11 +285,6 @@ function updateRoom(room, dt) {
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
     stepPhysics(room);
-    if (room.roundTime >= room.nextPlatRemoval && room.platforms.length > MIN_PLATFORMS) {
-      room.platforms.sort((a, b) => b.y - a.y);
-      room.platforms.shift();
-      room.nextPlatRemoval += 8;
-    }
     const alive = aliveList(room);
     if (alive.length <= 1) {
       room.winnerName = alive.length === 1 ? alive[0].username : null;
