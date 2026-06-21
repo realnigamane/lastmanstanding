@@ -119,12 +119,12 @@ const SCROLL_RAMP = 3.4;    // added px/sec for each second survived
 const SCROLL_MAX = 150;     // hardest scroll speed
 const PLAT_H = 16;
 const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
-const SPREAD = 300;                  // max horizontal shift between consecutive rungs
+const SPREAD = 110;                  // max horizontal shift between rungs — always within a jump's reach
 
 // Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 4, HAZARD_INTERVAL = 9, HAZARD_MAX = 3;
-const KNOCK_VY = -9.5, KNOCK_SHOVE = 24, KNOCK_INVULN = 0.5;
+const HAZARD_FIRST = 6, HAZARD_MAX = 6;            // first ball at 6s, ramps up to 6 at peak
+const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
                 '#7d5fff', '#ff4d97', '#5ad1cd', '#ff9f43', '#badc58'];
@@ -206,7 +206,7 @@ function makeBot(room) {
   const bot = {
     id: nextSessionId++, isBot: true, username: uniqueBotName(room),
     conn: { send() {} }, room, player: newPlayer(),
-    ai: { skill: 0.8 + Math.random() * 0.2, jitter: (Math.random() - 0.5) * 10, retargetIn: 0, target: null },
+    ai: { skill: 0.8 + Math.random() * 0.2, jitter: (Math.random() - 0.5) * 9, aim: 14 + Math.random() * 26, retargetIn: 0, target: null },
   };
   room.members.set(bot.id, bot);
   return bot;
@@ -226,8 +226,9 @@ function reachableX(room, width) {
 function makePlatform(room, y, width, moving) {
   const w = width != null ? width : 110 + Math.floor(Math.random() * 80);
   const x = reachableX(room, w);
-  const drift = moving ? (0.5 + Math.random() * 1.1) * (Math.random() < 0.5 ? -1 : 1) : 0;
-  return { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: drift, dx: 0 };
+  const p = { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: 0, dx: 0 };
+  if (moving) { p.homeX = x; p.amp = 18 + Math.random() * 18; p.phase = Math.random() * 6.283; p.spd = 0.018 + Math.random() * 0.018; }
+  return p;
 }
 function setupRound(room) {
   room.roundTime = 0; room.winnerName = null; room.scrollSpeed = SCROLL_START;
@@ -237,19 +238,22 @@ function setupRound(room) {
   // Wide starting platform near the bottom so everyone has a clear place to begin.
   const base = { id: room.nextPlatId++, x: WORLD.w / 2 - 200, y: WORLD.h - 96, w: 400, h: PLAT_H, vx: 0, dx: 0 };
   room.platforms.push(base);
+  // A guaranteed wide, centered first rung so EVERY spawn can climb off the base.
+  const rung1 = { id: room.nextPlatId++, x: WORLD.w / 2 - 150, y: base.y - 92, w: 300, h: PLAT_H, vx: 0, dx: 0 };
+  room.platforms.push(rung1);
   room.lastCenterX = WORLD.w / 2;
 
   // Build a stack of rungs upward (and a buffer above the screen) to climb.
-  let y = base.y;
+  let y = rung1.y;
   let idx = 0;
   while (y > -160) {
     y -= GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN);
-    const moving = idx >= 2 && Math.random() < 0.45;   // first couple rungs static, then some move
+    const moving = idx >= 3 && Math.random() < 0.45;   // first few rungs static for a reliable start
     room.platforms.push(makePlatform(room, y, null, moving));
     idx++;
   }
 
-  // Place every player neatly along the starting platform.
+  // Spread players across the starting platform (rung 1 above is wide enough to reach from anywhere).
   const members = [...room.members.values()];
   const n = members.length;
   members.forEach((s, i) => {
@@ -276,10 +280,9 @@ function stepPhysics(room) {
   for (const p of room.platforms) {
     const oldX = p.x;
     p.y += scrollPx;
-    if (p.vx) {
-      p.x += p.vx;
-      if (p.x <= 0) { p.x = 0; p.vx = Math.abs(p.vx); }
-      if (p.x + p.w >= WORLD.w) { p.x = WORLD.w - p.w; p.vx = -Math.abs(p.vx); }
+    if (p.amp != null) {   // gentle bounded sway — never drifts out of reach
+      p.phase += p.spd;
+      p.x = Math.max(0, Math.min(WORLD.w - p.w, p.homeX + Math.sin(p.phase) * p.amp));
     }
     p.dx = p.x - oldX;
   }
@@ -346,11 +349,19 @@ function resetHazard(b) {
   b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
   b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 2;
 }
+// Balls get nastier as the round drags on AND as more players are eliminated.
+function hazardFactor(room) {
+  return 1 + Math.min(1.25, room.roundTime * 0.010 + room.eliminated * 0.06);
+}
+function targetHazards(room) {
+  return Math.min(HAZARD_MAX, 1 + Math.floor(Math.max(0, room.roundTime - 6) / 8) + Math.floor(room.eliminated / 2));
+}
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
+  const hf = hazardFactor(room);
   for (const b of room.hazards) {
-    b.vy += HAZARD_GRAV;
-    b.x += b.vx;
+    b.vy += HAZARD_GRAV * hf;
+    b.x += b.vx * hf;
     b.y += b.vy + scrollPx;
     if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); }
     if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx); }
@@ -359,7 +370,7 @@ function stepHazards(room) {
       for (const plat of room.platforms) {
         if (b.x + b.r > plat.x && b.x - b.r < plat.x + plat.w &&
             b.y + b.r >= plat.y && b.y + b.r <= plat.y + plat.h + 14) {
-          b.y = plat.y - b.r; b.vy = HAZARD_BOUNCE * (0.85 + Math.random() * 0.3); break;
+          b.y = plat.y - b.r; b.vy = HAZARD_BOUNCE * hf * (0.85 + Math.random() * 0.3); break;
         }
       }
     }
@@ -386,41 +397,49 @@ function botThink(room, bot) {
   if (!p.alive || p.spectator) { p.input.left = p.input.right = p.input.jump = false; return; }
   const feet = p.y + PH, cx = p.x + PW / 2;
 
-  // Choose the next rung up: the lowest platform whose top is above our feet but within a jump.
-  let best = null, bestScore = Infinity;
-  for (const plat of room.platforms) {
-    const above = plat.y < feet - 4;
-    const reach = plat.y > p.y - 165;       // within jump height
-    if (!above || !reach) continue;
-    const platCx = plat.x + plat.w / 2;
-    const dx = Math.abs(platCx - cx);
-    // Prefer the closest rung up, lightly penalising big horizontal gaps.
-    const score = (feet - plat.y) + dx * 0.45;
-    if (score < bestScore) { bestScore = score; best = plat; }
-  }
-  // Fallback: nearest platform of any kind (shouldn't normally happen).
-  if (!best) {
-    for (const plat of room.platforms) {
-      const platCx = plat.x + plat.w / 2;
-      const dx = Math.abs(platCx - cx);
-      if (dx < bestScore) { bestScore = dx; best = plat; }
-    }
-  }
-
-  let goX = cx;
-  if (best) {
-    // Aim a touch ahead of a moving platform, plus a little per-bot jitter.
-    goX = best.x + best.w / 2 + best.vx * 14 + bot.ai.jitter;
-  }
-  const dx = goX - cx;
-  const dead = 6;
-  p.input.left = dx < -dead;
-  p.input.right = dx > dead;
-
   const onGround = p.onPlatform != null;
-  const inDanger = feet > WORLD.h * 0.66;            // floor catching up — jump now
-  const aligned = best && Math.abs(dx) < best.w / 2 + 6;
-  const wantJump = onGround && ((aligned && best && best.y < feet - 6) || inDanger);
+  let best = bot.ai.target != null ? room.platforms.find(pl => pl.id === bot.ai.target) : null;
+  if (best && best.y >= feet - 2) best = null;
+  if (onGround || !best) {
+    best = null; let bestScore = Infinity, nearest = null, nearGap = Infinity;
+    for (const plat of room.platforms) {
+      if (plat.y >= feet - 4) continue;
+      if (plat.y < p.y - 168) continue;
+      const gap = Math.abs((plat.x + plat.w / 2) - cx);
+      if (gap < nearGap) { nearGap = gap; nearest = plat; }
+      if (gap > 230) continue;
+      const score = gap + (feet - plat.y) * 0.2;
+      if (score < bestScore) { bestScore = score; best = plat; }
+    }
+    if (!best) best = nearest;
+    if (!best) { let hi = Infinity; for (const plat of room.platforms) if (plat.y < hi && plat.y < feet) { hi = plat.y; best = plat; } }
+    if (best) bot.ai.target = best.id;
+  }
+  let evade = 0;
+  for (const b of room.hazards) {
+    const bx = cx - b.x, by = (feet - PH / 2) - b.y;
+    if (bx * bx + by * by < (b.r + 72) * (b.r + 72)) { evade = bx >= 0 ? 1 : -1; break; }
+  }
+  let goX = best ? (best.x + best.w / 2) : cx;
+  if (evade) goX = cx + evade * 140;
+  goX += bot.ai.jitter;
+  const d = goX - cx;
+  p.input.left = d < -4;
+  p.input.right = d > 4;
+  let wantJump = false;
+  if (onGround) {
+    const plat = room.platforms.find(pl => pl.id === p.onPlatform);
+    if (best && best.y < feet - 6) {
+      const tcx = best.x + best.w / 2;
+      if (Math.abs(tcx - cx) < best.w / 2 + bot.ai.aim) wantJump = true;
+      else if (plat) {
+        if (tcx > cx && cx > plat.x + plat.w - 26) wantJump = true;
+        if (tcx < cx && cx < plat.x + 26) wantJump = true;
+      }
+    }
+    if (feet > WORLD.h - 58) wantJump = true;
+    if (evade && feet > 150) wantJump = true;
+  }
   p.input.jump = wantJump && !p.jumpHeld;
 }
 
@@ -446,9 +465,12 @@ function updateRoom(room, dt) {
     if (room.phaseTimer <= 0) { room.phase = 'playing'; room.roundTime = 0; }
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
-    room.scrollSpeed = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
-    if (room.roundTime >= room.nextHazardAt && room.hazards.length < HAZARD_MAX) {
-      spawnHazard(room); room.nextHazardAt += HAZARD_INTERVAL;
+    let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
+    if (room.roundTime > 55) ss = SCROLL_MAX + (room.roundTime - 55) * 12;   // sudden death — gradually outruns climbers
+    room.scrollSpeed = ss;
+    if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
+      spawnHazard(room);
+      room.nextHazardAt = room.roundTime + Math.max(2.2, 7 - room.eliminated * 0.4 - room.roundTime * 0.03);
     }
     for (const s of room.members.values()) if (s.isBot) botThink(room, s);
     stepPhysics(room);

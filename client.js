@@ -152,12 +152,16 @@
   bindHold($('btnLeft'), 'left'); bindHold($('btnRight'), 'right'); bindHold($('btnJump'), 'jump');
 
   function resizeCanvas() {
-    const ratio = W / H, pad = isTouch ? 8 : 24, reserveH = isTouch ? 8 : 70;
+    const ratio = W / H, pad = isTouch ? 0 : 24, reserveH = isTouch ? 0 : 70;
     let availW = window.innerWidth - pad * 2, availH = window.innerHeight - reserveH;
     let cw = availW, ch = availW / ratio;
     if (ch > availH) { ch = availH; cw = availH * ratio; }
     canvas.style.width = Math.floor(cw) + 'px';
     canvas.style.height = Math.floor(ch) + 'px';
+    if (isTouch) {
+      const g = $('game'); if (g) g.style.padding = '0';
+      const h = $('hint'); if (h) h.style.display = 'none';
+    }
   }
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 150));
