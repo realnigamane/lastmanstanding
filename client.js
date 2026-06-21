@@ -102,15 +102,11 @@
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
   function renderSearching(m) {
-    $('srFound').textContent = m.found;
-    $('srTarget').textContent = m.target;
-    $('srSub').textContent = m.found === 1 ? 'player searching' : 'players searching';
-    $('srTimer').textContent = m.secs > 0
-      ? 'Filling with bots in ' + m.secs + 's…'
-      : 'Starting…';
+    $('srTimer').textContent = m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…';
     const dots = $('srDots');
+    const lit = Math.min(m.target, Math.max(m.found, m.target - m.secs));
     let html = '';
-    for (let i = 0; i < m.target; i++) html += '<div class="slot ' + (i < m.found ? 'human' : '') + '"></div>';
+    for (let i = 0; i < m.target; i++) html += '<div class="slot ' + (i < lit ? 'human' : '') + '"></div>';
     dots.innerHTML = html;
   }
 
@@ -222,8 +218,8 @@
     ctx.globalAlpha = 1;
     // name (bots get a tiny tag)
     ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillStyle = pl.id === myUsername ? '#9fffce' : (pl.bot ? '#8b95c9' : '#c9d2ff');
-    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name + (pl.bot ? ' ·bot' : ''), cx, y - 5);
+    ctx.fillStyle = pl.id === myUsername ? '#9fffce' : '#c9d2ff';
+    ctx.fillText((pl.id === myUsername ? '▸ ' : '') + pl.name, cx, y - 5);
   }
   function drawHUD() {
     ctx.textAlign = 'left'; ctx.font = 'bold 15px Segoe UI, sans-serif'; ctx.fillStyle = '#c9d2ff';

@@ -416,7 +416,7 @@ function updateRoom(room, dt) {
 // =================== Snapshots ===================
 function memberList(room) {
   return [...room.members.values()].map(s => ({
-    name: s.username, bot: !!s.isBot,
+    name: s.username,
     color: s.player ? s.player.color : '#fff',
     alive: !!(s.player && s.player.alive),
   }));
@@ -424,7 +424,7 @@ function memberList(room) {
 function sendSearch(room) {
   const msg = JSON.stringify({
     t: 'searching',
-    found: humanCount(room), bots: room.members.size - humanCount(room),
+    found: humanCount(room),
     target: MATCH_SIZE, secs: Math.max(0, Math.ceil(room.fillTimer)),
     members: memberList(room),
   });
@@ -439,7 +439,7 @@ function roomSnapshot(room) {
     scroll: Math.round(room.scrollSpeed),
     platforms: room.platforms.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
     players: [...room.members.values()].map(s => ({
-      id: s.username, name: s.username, color: s.player.color, bot: !!s.isBot,
+      id: s.username, name: s.username, color: s.player.color,
       x: Math.round(s.player.x), y: Math.round(s.player.y),
       alive: s.player.alive, spectator: s.player.spectator, vx: Math.round(s.player.vx),
     })),
