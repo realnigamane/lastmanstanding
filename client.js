@@ -4,7 +4,7 @@
   const canvas = $('canvas'), ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
 
-  let ws = null, wsReady = false, pendingAuthToken = null;
+  let ws = null, wsReady = false, authToken = null;
   let myUsername = null, myCredits = 0;
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
@@ -28,13 +28,25 @@
     ws = new WebSocket(proto + '://' + location.host);
     ws.onopen = () => {
       wsReady = true;
-      if (pendingAuthToken) { sendWS({ t: 'auth', token: pendingAuthToken }); pendingAuthToken = null; }
+      if (authToken) sendWS({ t: 'auth', token: authToken });   // (re)authenticate on EVERY (re)connect
     };
     ws.onmessage = (ev) => handleMsg(JSON.parse(ev.data));
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
     ws.onclose = () => { wsReady = false; setTimeout(connect, 1000); };
   }
-  function sendWS(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
-  function authWith(token) { if (wsReady) sendWS({ t: 'auth', token }); else pendingAuthToken = token; }
+  function sendWS(obj) {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return true; }
+    ensureConnected();   // socket missing/closed (common on iOS after lock/backgrounding) — revive it
+    return false;
+  }
+  function authWith(token) { authToken = token; if (wsReady) sendWS({ t: 'auth', token }); }
+  // iOS/Safari aggressively suspends WebSockets when the tab is backgrounded or the phone
+  // is locked. Reconnect (which re-authenticates) whenever we return to the page or try to
+  // send on a dead socket, so buttons like "Find Match" never silently do nothing.
+  function ensureConnected() { if (!ws || ws.readyState > 1) connect(); }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureConnected(); });
+  window.addEventListener('pageshow', ensureConnected);
+  window.addEventListener('focus', ensureConnected);
 
   function handleMsg(m) {
     if (m.t === 'authed') {
@@ -110,7 +122,7 @@
   $('auUser').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('auPass').focus(); });
 
   // ---------- Home / dashboard ----------
-  $('btnFind').onclick = () => { $('hmResult').textContent = ''; sendWS({ t: 'findMatch' }); };
+  $('btnFind').onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch' })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; };
   $('btnLogout').onclick = () => { localStorage.removeItem('lms_token'); location.reload(); };
   $('btnDeposit').onclick = () => { $('depMsg').textContent = 'Crypto deposits are coming soon — not enabled yet.'; };
   $('btnWithdraw').onclick = () => {
@@ -120,7 +132,7 @@
     sendWS({ t: 'requestWithdraw', amount: amt });
   };
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
-  document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) }); }; });
+  document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });
 
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
