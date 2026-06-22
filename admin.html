@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Last Duck Standing — Admin</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%;
+    background: radial-gradient(1200px 800px at 50% -10%, #16203f, #0b0e1a 60%);
+    color: #e8ecff; font-family: 'Segoe UI', system-ui, sans-serif; }
+  a { color: #6fd3ff; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 18px 60px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
+  h1 .tm { color: #ffd479; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: #cdd6ff; text-transform: uppercase; letter-spacing: 1px; }
+  .muted { color: #8b95c9; font-size: 12.5px; }
+  .card { background: #141a31; border: 1px solid #2a3358; border-radius: 14px; padding: 18px 18px; margin-bottom: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+  input { padding: 10px 12px; font-size: 14px; border-radius: 9px; border: 1px solid #34406e; background: #0e1326; color: #fff; outline: none; }
+  input:focus { border-color: #5a6cff; }
+  button { cursor: pointer; border: none; border-radius: 9px; font-weight: 600; font-size: 13.5px; padding: 10px 14px; color: #06122b; background: linear-gradient(90deg, #4be3ff, #7d5fff); }
+  button:hover { filter: brightness(1.08); }
+  button.ghost { background: #1d264a; color: #cdd6ff; border: 1px solid #34406e; }
+  button.good { background: linear-gradient(90deg, #32ff7e, #14c46a); }
+  button.bad { background: linear-gradient(90deg, #ff7a7a, #ff4d4d); color: #2a0606; }
+  button.sm { padding: 6px 10px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #222a4d; }
+  th { color: #8b95c9; font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill.play { background: #14351f; color: #6bff9e; }
+  .pill.wait { background: #2a2a14; color: #ffe08a; }
+  .pill.over { background: #2a1430; color: #ff9fe0; }
+  .pill.cash { background: #2a2410; color: #ffd479; }
+  .pill.free { background: #15233a; color: #8fd0ff; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { flex: 1; min-width: 130px; background: #141a31; border: 1px solid #2a3358; border-radius: 12px; padding: 12px 14px; }
+  .stat .n { font-size: 26px; font-weight: 800; color: #4be3ff; }
+  .stat .l { font-size: 12px; color: #8b95c9; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .err { color: #ff8a8a; font-size: 13px; min-height: 18px; }
+  .ok { color: #9fffce; font-size: 13px; min-height: 18px; }
+  .players { color: #aab6ee; font-size: 12px; }
+  .bot { color: #6b76b0; }
+  .scroll { overflow-x: auto; }
+  /* login */
+  #login { max-width: 380px; margin: 8vh auto 0; }
+  #login input { width: 100%; margin-bottom: 10px; }
+  .hidden { display: none !important; }
+  .dot { font-size: 11px; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="card">
+  <h1>🦆 <span class="tm">Admin</span> Portal</h1>
+  <p class="muted" style="margin:6px 0 16px">Last Duck Standing — administrator access only.</p>
+  <input id="u" placeholder="Admin username" autocomplete="username" />
+  <input id="p" type="password" placeholder="Password" autocomplete="current-password" />
+  <div id="loginErr" class="err"></div>
+  <button id="btnLogin" style="width:100%">Log in</button>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dash" class="wrap hidden">
+  <div class="topbar">
+    <h1>🦆 <span class="tm">Admin</span> Portal</h1>
+    <div class="row">
+      <span id="refreshNote" class="muted"></span>
+      <button id="btnRefresh" class="ghost sm">Refresh now</button>
+      <button id="btnLogout" class="ghost sm">Log out</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="n" id="stGames">0</div><div class="l">Active games</div></div>
+    <div class="stat"><div class="n" id="stOnline">0</div><div class="l">Players online</div></div>
+    <div class="stat"><div class="n" id="stPending">0</div><div class="l">Pending payouts</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Active games</h2>
+    <div class="scroll"><table id="gamesTbl"><thead><tr>
+      <th>Code</th><th>Status</th><th>Stake</th><th>Pot</th><th>Alive</th><th>Players</th><th>Time</th>
+    </tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Players online</h2>
+    <div class="scroll"><table id="onlineTbl"><thead><tr>
+      <th>User</th><th>Balance</th><th>Status</th>
+    </tr></thead><tbody></tbody></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Issue / remove credits</h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="cUser" placeholder="username" style="width:180px" />
+      <input id="cAmt" type="number" min="1" placeholder="amount" style="width:130px" />
+      <button id="btnIssue" class="good">+ Issue</button>
+      <button id="btnRemove" class="bad">− Remove</button>
+    </div>
+    <div id="creditMsg" class="ok"></div>
+  </div>
+
+  <div class="card">
+    <h2>Payout requests</h2>
+    <div class="scroll"><table id="wdTbl"><thead><tr>
+      <th>#</th><th>User</th><th>Amount</th><th>Status</th><th>Requested</th><th>Action</th>
+    </tr></thead><tbody></tbody></table></div>
+    <div id="wdMsg" class="ok"></div>
+  </div>
+
+  <div class="card">
+    <h2>All accounts</h2>
+    <div class="scroll"><table id="usersTbl"><thead><tr>
+      <th>User</th><th>Balance</th><th>Wins</th><th>Joined</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var token = localStorage.getItem('lds_admin_token') || null;
+  var timer = null;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function fmtCredits(c) { return c == null ? '—' : '💰 ' + c; }
+  function fmtTime(t) { if (!t) return '—'; try { return new Date(t).toLocaleString(); } catch (e) { return t; } }
+
+  async function api(pathName, extra) {
+    var body = Object.assign({ token: token }, extra || {});
+    var r = await fetch('/api/admin/' + pathName, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    var d = {}; try { d = await r.json(); } catch (e) {}
+    if (r.status === 403) { logout('Session expired — log in again.'); throw new Error('forbidden'); }
+    return d;
+  }
+
+  // ---- login ----
+  async function login() {
+    var u = $('u').value.trim(), p = $('p').value;
+    $('loginErr').textContent = '';
+    if (!u || !p) { $('loginErr').textContent = 'Enter username and password.'; return; }
+    try {
+      var r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p }) });
+      var d = await r.json();
+      if (d.error) { $('loginErr').textContent = d.error; return; }
+      if (!d.admin) { $('loginErr').textContent = 'That account is not an administrator.'; return; }
+      token = d.token; localStorage.setItem('lds_admin_token', token);
+      showDash();
+    } catch (e) { $('loginErr').textContent = 'Could not reach the server.'; }
+  }
+  function logout(msg) {
+    token = null; localStorage.removeItem('lds_admin_token');
+    if (timer) { clearInterval(timer); timer = null; }
+    $('dash').classList.add('hidden'); $('login').classList.remove('hidden');
+    if (msg) $('loginErr').textContent = msg;
+  }
+  $('btnLogin').onclick = login;
+  $('p').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
+  $('btnLogout').onclick = function () { logout(''); };
+
+  function showDash() {
+    $('login').classList.add('hidden'); $('dash').classList.remove('hidden');
+    refresh();
+    if (timer) clearInterval(timer);
+    timer = setInterval(refresh, 4000);
+  }
+
+  // ---- render ----
+  function statusPill(phase) {
+    if (phase === 'playing') return '<span class="pill play">playing</span>';
+    if (phase === 'matchmaking') return '<span class="pill wait">matchmaking</span>';
+    if (phase === 'countdown') return '<span class="pill wait">starting</span>';
+    if (phase === 'roundover') return '<span class="pill over">round over</span>';
+    return '<span class="pill">' + esc(phase) + '</span>';
+  }
+  function renderGames(games) {
+    var tb = $('gamesTbl').getElementsByTagName('tbody')[0];
+    if (!games.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">No active games.</td></tr>'; return; }
+    tb.innerHTML = games.map(function (g) {
+      var stake = g.wager > 0 ? '<span class="pill cash">' + g.wager + '</span>' : '<span class="pill free">free</span>';
+      var names = g.players.map(function (p) {
+        var cls = p.bot ? 'bot' : '';
+        var dead = p.alive ? '' : ' dot';
+        return '<span class="' + cls + '">' + esc(p.name) + (p.alive ? '' : ' ✗') + '</span>';
+      }).join(', ');
+      return '<tr><td><b>' + esc(g.code) + '</b></td><td>' + statusPill(g.phase) + '</td><td>' + stake +
+        '</td><td>' + (g.wager > 0 ? g.pot : '—') + '</td><td>' + g.alive + '/' + g.total +
+        '</td><td class="players">' + names + '</td><td>' + (g.phase === 'playing' ? g.roundTime + 's' : '—') + '</td></tr>';
+    }).join('');
+  }
+  function renderOnline(list) {
+    var tb = $('onlineTbl').getElementsByTagName('tbody')[0];
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">Nobody online right now.</td></tr>'; return; }
+    tb.innerHTML = list.map(function (o) {
+      var st = o.inGame ? '<span class="pill play">in game ' + esc(o.room || '') + '</span>' : '<span class="pill free">in lobby</span>';
+      var badge = o.admin ? ' <span class="pill cash">admin</span>' : '';
+      return '<tr><td>' + esc(o.username) + badge + '</td><td>' + fmtCredits(o.credits) + '</td><td>' + st + '</td></tr>';
+    }).join('');
+  }
+  function renderWithdrawals(list) {
+    var tb = $('wdTbl').getElementsByTagName('tbody')[0];
+    var pending = 0;
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No payout requests.</td></tr>'; }
+    else {
+      tb.innerHTML = list.map(function (w) {
+        var isPending = (w.status || 'pending') === 'pending';
+        if (isPending) pending++;
+        var action = isPending
+          ? '<button class="good sm" data-approve="' + w.id + '">Approve</button> ' +
+            '<button class="bad sm" data-reject="' + w.id + '">Reject</button>'
+          : '<span class="muted">' + esc(w.status) + '</span>';
+        var stcls = isPending ? 'wait' : (w.status === 'approved' ? 'play' : 'over');
+        return '<tr><td>' + esc(w.id) + '</td><td>' + esc(w.username_lower) + '</td><td>💰 ' + w.amount +
+          '</td><td><span class="pill ' + stcls + '">' + esc(w.status || 'pending') + '</span></td><td class="muted">' +
+          fmtTime(w.created_at) + '</td><td>' + action + '</td></tr>';
+      }).join('');
+      bindWdButtons();
+    }
+    $('stPending').textContent = pending;
+  }
+  function renderUsers(list) {
+    var tb = $('usersTbl').getElementsByTagName('tbody')[0];
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No accounts.</td></tr>'; return; }
+    tb.innerHTML = list.map(function (u) {
+      return '<tr><td>' + esc(u.username) + '</td><td>' + fmtCredits(u.credits) + '</td><td>' + (u.wins || 0) +
+        '</td><td class="muted">' + fmtTime(u.created_at) + '</td><td>' +
+        '<button class="ghost sm" data-fill="' + esc(u.username) + '">Manage</button></td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-fill]'), function (b) {
+      b.onclick = function () { $('cUser').value = b.getAttribute('data-fill'); $('cAmt').focus(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+    });
+  }
+  function bindWdButtons() {
+    var tb = $('wdTbl');
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-approve]'), function (b) {
+      b.onclick = function () { handleWd(b.getAttribute('data-approve'), 'approve'); };
+    });
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-reject]'), function (b) {
+      b.onclick = function () { handleWd(b.getAttribute('data-reject'), 'reject'); };
+    });
+  }
+
+  async function handleWd(id, action) {
+    $('wdMsg').textContent = '';
+    try {
+      var d = await api('withdrawal', { id: id, action: action });
+      if (d.error) { $('wdMsg').textContent = d.error; $('wdMsg').className = 'err'; }
+      else {
+        $('wdMsg').className = 'ok';
+        $('wdMsg').textContent = action === 'approve'
+          ? ('✓ Approved #' + id + ' — deducted ' + d.deducted + ' credits.')
+          : ('✓ Rejected #' + id + '.');
+      }
+      refresh();
+    } catch (e) {}
+  }
+
+  async function adjust(sign) {
+    var user = $('cUser').value.trim();
+    var amt = parseInt($('cAmt').value, 10);
+    $('creditMsg').textContent = '';
+    if (!user || !amt || amt <= 0) { $('creditMsg').className = 'err'; $('creditMsg').textContent = 'Enter a username and a positive amount.'; return; }
+    try {
+      var d = await api('credits', { username: user, delta: sign * amt });
+      if (d.error) { $('creditMsg').className = 'err'; $('creditMsg').textContent = d.error; }
+      else { $('creditMsg').className = 'ok';
+        $('creditMsg').textContent = '✓ ' + d.username + ' is now at 💰 ' + d.credits + ' credits (' + (d.delta > 0 ? '+' : '') + d.delta + ').';
+        $('cAmt').value = ''; }
+      refresh();
+    } catch (e) {}
+  }
+  $('btnIssue').onclick = function () { adjust(1); };
+  $('btnRemove').onclick = function () { adjust(-1); };
+  $('btnRefresh').onclick = function () { refresh(); };
+
+  async function refresh() {
+    try {
+      var ov = await api('overview');
+      renderGames(ov.games || []);
+      renderOnline(ov.online || []);
+      $('stGames').textContent = (ov.counts && ov.counts.games) || 0;
+      $('stOnline').textContent = (ov.counts && ov.counts.online) || 0;
+      $('refreshNote').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      var wd = await api('withdrawals'); renderWithdrawals(wd.withdrawals || []);
+      var us = await api('users'); renderUsers(us.users || []);
+    } catch (e) { /* logout handled in api() */ }
+  }
+
+  // ---- boot ----
+  if (token) showDash();
+})();
+</script>
+</body>
+</html>

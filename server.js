@@ -27,6 +27,11 @@ const store = require('./store');
 
 const PORT = process.env.PORT || 3000;
 
+// The admin account. This username is reserved (cannot be registered publicly)
+// and unlocks the /admin portal. Auth still goes through the normal login flow,
+// so the password is only ever stored as a salted hash in the database.
+const ADMIN_USER = 'deedotheadmin';
+
 // Rank tiers — a player's rank goes up every 5 wins.
 const RANKS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Grandmaster', 'Legend', 'Mythic', 'Duck God'];
 function rankFor(wins) {
@@ -46,6 +51,7 @@ async function registerUser(username, password) {
   if (!/^[a-zA-Z0-9_]+$/.test(username)) return { error: 'Use letters, numbers, and underscores only.' };
   if (String(password || '').length < 4) return { error: 'Password must be at least 4 characters.' };
   const key = username.toLowerCase();
+  if (key === ADMIN_USER) return { error: 'That username is reserved.' };
   if (await store.getUser(key)) return { error: 'That username is already taken.' };
   const salt = crypto.randomBytes(16).toString('hex');
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
@@ -65,10 +71,77 @@ async function loginUser(username, password) {
   } catch (e) { ok = false; }
   if (!ok) return { error: 'Incorrect password.' };
   const token = makeToken(); sessionsByToken.set(token, key);
-  return { ok: true, token, username: u.username, credits: u.credits };
+  return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER };
 }
 
-// =================== HTTP (static + auth API) ===================
+// =================== Admin ===================
+function isAdminToken(token) { return token && sessionsByToken.get(token) === ADMIN_USER; }
+
+// A live snapshot of everything the admin portal needs: active games + online players.
+function adminOverview() {
+  const games = [...rooms.values()].map(r => ({
+    code: r.code, phase: r.phase, wager: r.wager, pot: r.pot,
+    roundTime: Math.floor(r.roundTime || 0),
+    humans: humanCount(r), total: r.members.size, alive: aliveList(r).length,
+    players: [...r.members.values()].map(s => ({
+      name: s.username, bot: !!s.isBot,
+      alive: !!(s.player && s.player.alive),
+      credits: s.isBot ? null : (s.credits != null ? s.credits : null),
+    })),
+  }));
+  const online = [...allSessions.values()].filter(s => s.username).map(s => ({
+    username: s.username, credits: s.credits != null ? s.credits : null,
+    room: s.room ? s.room.code : null, inGame: !!s.room,
+    admin: s.key === ADMIN_USER,
+  }));
+  return { games, online, counts: { games: games.length, online: online.length }, serverTime: new Date().toISOString() };
+}
+
+// Reflect a credit change to a logged-in player instantly (if they're online).
+function reflectCredits(key, credits) {
+  const online = [...allSessions.values()].find(x => x.key === key);
+  if (online) { online.credits = credits; try { online.conn.send(JSON.stringify({ t: 'credits', credits: credits })); } catch (e) {} }
+}
+
+async function adminAdjustCredits(username, delta) {
+  const key = String(username || '').trim().toLowerCase();
+  if (!key) return { error: 'Enter a username.' };
+  delta = Math.floor(Number(delta) || 0);
+  if (!delta) return { error: 'Enter a non-zero amount.' };
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  const newC = Math.max(0, (u.credits || 0) + delta);
+  await store.updateCredits(key, newC);
+  reflectCredits(key, newC);
+  return { ok: true, username: u.username, credits: newC, delta };
+}
+
+async function adminHandleWithdrawal(id, action) {
+  if (action !== 'approve' && action !== 'reject') return { error: 'Invalid action.' };
+  const list = await store.listWithdrawals();
+  const row = list.find(w => String(w.id) === String(id));
+  if (!row) return { error: 'Request not found.' };
+  if (row.status && row.status !== 'pending') return { error: 'Already ' + row.status + '.' };
+  if (action === 'reject') {
+    await store.setWithdrawalStatus(row.id, 'rejected');
+    return { ok: true, id: row.id, status: 'rejected' };
+  }
+  // approve -> deduct the payout amount from the user's balance
+  const key = row.username_lower;
+  const u = await store.getUser(key);
+  let newC = u ? (u.credits || 0) : 0;
+  let deducted = 0;
+  if (u) {
+    deducted = Math.min(newC, row.amount);
+    newC = newC - deducted;
+    await store.updateCredits(key, newC);
+    reflectCredits(key, newC);
+  }
+  await store.setWithdrawalStatus(row.id, 'approved');
+  return { ok: true, id: row.id, status: 'approved', deducted, credits: newC };
+}
+
+// =================== HTTP (static + auth/admin API) ===================
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
 
@@ -79,6 +152,22 @@ const server = http.createServer((req, res) => {
     req.on('end', async () => {
       let data = {}; try { data = JSON.parse(body || '{}'); } catch (e) {}
       try {
+        // Admin routes require a valid admin session token.
+        if (req.url.startsWith('/api/admin/')) {
+          if (!isAdminToken(data.token)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not authorized.' })); return;
+          }
+          let r;
+          if (req.url === '/api/admin/overview') r = adminOverview();
+          else if (req.url === '/api/admin/users') r = { ok: true, users: await store.listUsers() };
+          else if (req.url === '/api/admin/credits') r = await adminAdjustCredits(data.username, data.delta);
+          else if (req.url === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
+          else if (req.url === '/api/admin/withdrawal') r = await adminHandleWithdrawal(data.id, data.action);
+          else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
+          res.writeHead(r && r.error ? 400 : 200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(r)); return;
+        }
         let result;
         if (req.url === '/api/register') result = await registerUser(data.username, data.password);
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
@@ -95,9 +184,10 @@ const server = http.createServer((req, res) => {
   }
   // Static files: serve ONLY these from the project root. An explicit allowlist
   // means server code, .env, and other files can never be fetched over the web.
-  const STATIC = new Set(['index.html', 'client.js']);
+  const STATIC = new Set(['index.html', 'client.js', 'admin.html']);
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
-  const file = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
+  let file = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
+  if (file === 'admin' || file === 'admin/') file = 'admin.html';   // pretty URL: /admin
   if (!STATIC.has(file)) { res.writeHead(404); res.end('Not found'); return; }
   fs.readFile(path.join(__dirname, file), (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
@@ -143,7 +233,7 @@ const BOT_NAMES = ['Riley', 'Max', 'Nova', 'Kai', 'Zoe', 'Leo', 'Mia', 'Finn',
 const rooms = new Map();         // code -> room
 const allSessions = new Map();   // sessionId -> human session
 let nextSessionId = 1;
-// Matchmaking rooms are found by scanning `rooms` for a waiting room with the same wager.
+// Matchmaking rooms are found by scanning the rooms map for a waiting room with the same wager.
 
 function genCode() {
   const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -518,7 +608,7 @@ function updateRoom(room, dt) {
         }
       }
       rooms.delete(room.code);
-     
+
     }
   }
 }

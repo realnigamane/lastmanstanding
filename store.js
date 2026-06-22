@@ -5,7 +5,7 @@
 // game still runs out of the box.
 //
 // User record shape (same for both backends):
-//   { username, username_lower, salt, hash, credits, created_at }
+//   { username, username_lower, salt, hash, credits, wins, created_at }
 const fs = require('fs');
 const path = require('path');
 
@@ -23,21 +23,21 @@ function sbHeaders(extra) {
   }, extra || {});
 }
 async function sbGetUser(key) {
-  const url = `${SB_URL}/rest/v1/${TABLE}?username_lower=eq.${encodeURIComponent(key)}&select=*&limit=1`;
+  const url = SB_URL + '/rest/v1/' + TABLE + '?username_lower=eq.' + encodeURIComponent(key) + '&select=*&limit=1';
   const r = await fetch(url, { headers: sbHeaders() });
   if (!r.ok) throw new Error('Supabase getUser ' + r.status + ': ' + (await r.text()));
   const rows = await r.json();
   return rows[0] || null;
 }
 async function sbCreateUser(u) {
-  const r = await fetch(`${SB_URL}/rest/v1/${TABLE}`, {
+  const r = await fetch(SB_URL + '/rest/v1/' + TABLE, {
     method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(u),
   });
   if (r.status === 409) throw new Error('DUPLICATE');
   if (!r.ok) throw new Error('Supabase createUser ' + r.status + ': ' + (await r.text()));
 }
 async function sbUpdateCredits(key, credits) {
-  const url = `${SB_URL}/rest/v1/${TABLE}?username_lower=eq.${encodeURIComponent(key)}`;
+  const url = SB_URL + '/rest/v1/' + TABLE + '?username_lower=eq.' + encodeURIComponent(key);
   const r = await fetch(url, {
     method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify({ credits }),
   });
@@ -59,6 +59,26 @@ async function sbCreateWithdrawal(key, amount) {
     body: JSON.stringify({ username_lower: key, amount: amount }),
   });
   if (!r.ok) throw new Error('Supabase createWithdrawal ' + r.status + ': ' + (await r.text()));
+}
+// ---- admin helpers (Supabase) ----
+async function sbListUsers() {
+  const url = SB_URL + '/rest/v1/' + TABLE + '?select=username,username_lower,credits,wins,created_at&order=credits.desc';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listUsers ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbListWithdrawals() {
+  const url = SB_URL + '/rest/v1/withdrawal_requests?select=*&order=created_at.desc';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listWithdrawals ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbSetWithdrawalStatus(id, status) {
+  const url = SB_URL + '/rest/v1/withdrawal_requests?id=eq.' + encodeURIComponent(id);
+  const r = await fetch(url, {
+    method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify({ status: status }),
+  });
+  if (!r.ok) throw new Error('Supabase setWithdrawalStatus ' + r.status + ': ' + (await r.text()));
 }
 
 // ---------------- Local file backend ----------------
@@ -85,11 +105,33 @@ async function fileRecordWin(key) {
 const WITHDRAW_FILE = path.join(DATA_DIR, 'withdrawals.json');
 let withdrawals = [];
 try { withdrawals = JSON.parse(fs.readFileSync(WITHDRAW_FILE, 'utf8')); } catch (e) { withdrawals = []; }
-async function fileCreateWithdrawal(key, amount) {
-  withdrawals.push({ username_lower: key, amount: amount, status: 'pending', created_at: new Date().toISOString() });
+function saveWithdrawals() {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(WITHDRAW_FILE, JSON.stringify(withdrawals, null, 2)); } catch (e) {}
+}
+async function fileCreateWithdrawal(key, amount) {
+  withdrawals.push({ id: withdrawals.length, username_lower: key, amount: amount, status: 'pending', created_at: new Date().toISOString() });
+  saveWithdrawals();
+}
+// ---- admin helpers (file) ----
+async function fileListUsers() {
+  return Object.values(users).map(u => ({
+    username: u.username, username_lower: u.username_lower,
+    credits: u.credits, wins: u.wins || 0, created_at: u.created_at,
+  })).sort((a, b) => (b.credits || 0) - (a.credits || 0));
+}
+async function fileListWithdrawals() {
+  return withdrawals.map((w, i) => Object.assign({ id: (w.id != null ? w.id : i) }, w))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+async function fileSetWithdrawalStatus(id, status) {
+  const row = withdrawals.find((w, i) => String(w.id != null ? w.id : i) === String(id));
+  if (row) { row.status = status; saveWithdrawals(); }
 }
 
 module.exports = useSupabase
-  ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits, recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal }
-  : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits, recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal };
+  ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
+      recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
+      listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus }
+  : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
+      recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
+      listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus };
