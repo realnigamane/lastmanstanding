@@ -174,7 +174,16 @@ async function handleDepositCreate(token, amount) {
   amount = Math.floor(Number(amount) || 0);
   if (amount < 1 || amount > 10000) return { error: 'Enter an amount between 1 and 10000.' };
   if (!btcpayConfigured()) return { error: 'Deposits are not enabled yet.' };
-  const inv = await btcpayCreateInvoice(amount, key);
+  let inv;
+  try {
+    inv = await btcpayCreateInvoice(amount, key);
+  } catch (e) {
+    console.error('deposit invoice failed:', e.message);
+    if (/node not available|payment method unavailable|matching payment method/i.test(e.message)) {
+      return { error: 'Deposits are warming up — the payment node is still syncing. Please try again in a bit.' };
+    }
+    return { error: 'Could not start the deposit right now. Please try again shortly.' };
+  }
   try { await store.addTx({ username_lower: key, kind: 'deposit_pending', amount, room_code: inv.id }); } catch (e) {}
   return { ok: true, checkoutLink: inv.checkoutLink, invoiceId: inv.id };
 }
