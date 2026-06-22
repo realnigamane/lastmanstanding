@@ -432,7 +432,7 @@ const SPREAD = 110;                  // max horizontal shift between rungs — a
 
 // Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 12, HAZARD_MAX = 5;           // calm opening: first ball at 12s, then ramps up
+const HAZARD_FIRST = 12, HAZARD_MAX = 4;           // calm opening: first ball at 12s, then ramps up
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -670,7 +670,7 @@ function hazardFactor(room) {
 }
 function targetHazards(room) {
   if (room.roundTime < HAZARD_FIRST) return 0;
-  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 11) + Math.floor(room.eliminated / 3));
+  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 14) + Math.floor(room.eliminated / 4));
 }
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
