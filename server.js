@@ -55,11 +55,11 @@ async function registerUser(username, password) {
   if (await store.getUser(key)) return { error: 'That username is already taken.' };
   const salt = crypto.randomBytes(16).toString('hex');
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
-                 credits: 1000, wins: 0, created_at: new Date().toISOString() };
+                 credits: 0, wins: 0, created_at: new Date().toISOString() };
   try { await store.createUser(user); }
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
   const token = makeToken(); sessionsByToken.set(token, key);
-  return { ok: true, token, username, credits: 1000 };
+  return { ok: true, token, username, credits: 0 };
 }
 async function loginUser(username, password) {
   const key = String(username || '').trim().toLowerCase();
@@ -72,6 +72,47 @@ async function loginUser(username, password) {
   if (!ok) return { error: 'Incorrect password.' };
   const token = makeToken(); sessionsByToken.set(token, key);
   return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER };
+}
+
+// =================== Credit safety (atomic, per-user) ===================
+// Single Node process, so a per-user async lock serializes every balance change
+// for a given user — this closes the read-modify-write races on credits.
+const userLocks = new Map();
+function withLock(key, fn) {
+  const prev = userLocks.get(key) || Promise.resolve();
+  const run = prev.then(fn, fn);            // run fn after the previous op settles
+  userLocks.set(key, run.then(() => {}, () => {}));
+  return run;
+}
+// Add delta (may be negative) to a balance, floored at 0. Returns the new balance.
+async function changeCredits(key, delta) {
+  return withLock(key, async () => {
+    const u = await store.getUser(key);
+    if (!u) return 0;
+    const nc = Math.max(0, (u.credits || 0) + Math.floor(delta));
+    await store.updateCredits(key, nc);
+    return nc;
+  });
+}
+// Debit amount only if the balance covers it. Returns { ok, credits }.
+async function debitIfEnough(key, amount) {
+  return withLock(key, async () => {
+    const u = await store.getUser(key);
+    if (!u || (u.credits || 0) < amount) return { ok: false, credits: u ? (u.credits || 0) : 0 };
+    const nc = (u.credits || 0) - amount;
+    await store.updateCredits(key, nc);
+    return { ok: true, credits: nc };
+  });
+}
+
+// Basic in-memory rate limiting (per IP + bucket).
+const rateHits = new Map();
+function clientIp(req) { return ((req.headers['x-forwarded-for'] || '').split(',')[0] || '').trim() || req.socket.remoteAddress || 'unknown'; }
+function rateLimited(ip, bucket, max, windowMs) {
+  const k = bucket + ':' + ip, now = Date.now();
+  const arr = (rateHits.get(k) || []).filter(t => now - t < windowMs);
+  if (arr.length >= max) { rateHits.set(k, arr); return true; }
+  arr.push(now); rateHits.set(k, arr); return false;
 }
 
 // =================== Admin ===================
@@ -110,8 +151,7 @@ async function adminAdjustCredits(username, delta) {
   if (!delta) return { error: 'Enter a non-zero amount.' };
   const u = await store.getUser(key);
   if (!u) return { error: 'No user named "' + username + '".' };
-  const newC = Math.max(0, (u.credits || 0) + delta);
-  await store.updateCredits(key, newC);
+  const newC = await changeCredits(key, delta);
   reflectCredits(key, newC);
   return { ok: true, username: u.username, credits: newC, delta };
 }
@@ -219,26 +259,23 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   if (amount < WITHDRAW_MIN) return { error: 'Minimum withdrawal is ' + WITHDRAW_MIN + ' credits.' };
   if (amount > WITHDRAW_MAX) return { error: 'Max auto-withdrawal is ' + WITHDRAW_MAX + ' credits — split larger cash-outs.' };
   if (!btcpayConfigured()) return { error: 'Withdrawals are not enabled yet.' };
-  const u = await store.getUser(key);
-  if (!u || (u.credits || 0) < amount) return { error: 'You do not have enough credits.' };
-  // Deduct first (escrow) so the same credits can't be withdrawn twice.
-  const newC = (u.credits || 0) - amount;
-  await store.updateCredits(key, newC);
-  reflectCredits(key, newC);
+  // Atomically debit the escrow — prevents concurrent withdrawals draining past balance.
+  const deb = await debitIfEnough(key, amount);
+  if (!deb.ok) return { error: 'You do not have enough credits.' };
+  reflectCredits(key, deb.credits);
   let payout;
   try {
     payout = await btcpayCreatePayout(coin, address, amount);
   } catch (e) {
     console.error('withdraw payout failed:', e.message);
-    const u2 = await store.getUser(key);              // refund the escrow on failure
-    const back = (u2 ? (u2.credits || 0) : 0) + amount;
-    await store.updateCredits(key, back); reflectCredits(key, back);
+    const back = await changeCredits(key, amount);    // refund the escrow on failure
+    reflectCredits(key, back);
     if (/node not available|payment method|not.*sync/i.test(e.message)) return { error: 'Withdrawals are warming up — the payout node is still syncing. Try again later.' };
     if (/destination|address|invalid|bip21/i.test(e.message)) return { error: 'That ' + coin + ' address looks invalid — double-check it.' };
     return { error: 'Could not start the withdrawal right now. Try again shortly.' };
   }
   try { await store.addTx({ username_lower: key, kind: 'withdraw', amount, room_code: payout.id }); } catch (e) {}
-  return { ok: true, payoutId: payout.id, credits: newC };
+  return { ok: true, payoutId: payout.id, credits: deb.credits };
 }
 
 // Verify the BTCPay-Sig HMAC over the raw body, then credit on a settled invoice (idempotent).
@@ -256,13 +293,9 @@ async function handleBtcpayWebhook(req, rawBody) {
     const amt = Math.floor(Number(inv.amount) || 0);
     const key = inv.metadata && inv.metadata.username;
     if (key && amt > 0) {
-      const u = await store.getUser(key);
-      if (u) {
-        const newC = (u.credits || 0) + amt;
-        await store.updateCredits(key, newC);
-        reflectCredits(key, newC);
-        await store.addTx({ username_lower: key, kind: 'deposit', amount: amt, room_code: ev.invoiceId });
-      }
+      const newC = await changeCredits(key, amt);
+      reflectCredits(key, newC);
+      await store.addTx({ username_lower: key, kind: 'deposit', amount: amt, room_code: ev.invoiceId });
     }
   }
   // Payout was cancelled -> refund the player's escrowed credits (idempotent).
@@ -271,8 +304,8 @@ async function handleBtcpayWebhook(req, rawBody) {
     if (p && p.state === 'Cancelled' && !(await store.txExists('withdraw_refunded', ev.payoutId))) {
       const row = await store.getTx('withdraw', ev.payoutId);
       if (row) {
-        const u = await store.getUser(row.username_lower);
-        if (u) { const back = (u.credits || 0) + row.amount; await store.updateCredits(row.username_lower, back); reflectCredits(row.username_lower, back); }
+        const back = await changeCredits(row.username_lower, row.amount);
+        reflectCredits(row.username_lower, back);
         await store.addTx({ username_lower: row.username_lower, kind: 'withdraw_refunded', amount: row.amount, room_code: ev.payoutId });
       }
     }
@@ -296,6 +329,14 @@ const server = http.createServer((req, res) => {
         return;
       }
       let data = {}; try { data = JSON.parse(body || '{}'); } catch (e) {}
+      const ip = clientIp(req);
+      if ((req.url === '/api/register' && rateLimited(ip, 'register', 5, 3600000)) ||
+          (req.url === '/api/login' && rateLimited(ip, 'login', 20, 600000)) ||
+          (req.url === '/api/withdraw/create' && rateLimited(ip, 'withdraw', 8, 3600000)) ||
+          (req.url === '/api/deposit/create' && rateLimited(ip, 'deposit', 30, 3600000))) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Too many requests — wait a moment and try again.' })); return;
+      }
       try {
         // Admin routes require a valid admin session token.
         if (req.url.startsWith('/api/admin/')) {
@@ -427,6 +468,13 @@ function addToMatch(s, wager) {
 function leaveMatch(s, silent) {
   const room = s.room;
   if (!room) return;
+  // Refund the escrowed wager only if the match has NOT started (still matchmaking).
+  // Leaving once it's started forfeits the stake (it stays in the pot).
+  if (s.wagerPaid > 0 && room.phase === 'matchmaking') {
+    const k = s.key;
+    changeCredits(k, s.wagerPaid).then(nc => { if (s.key === k) { s.credits = nc; } reflectCredits(k, nc); }).catch(() => {});
+  }
+  s.wagerPaid = 0;
   room.members.delete(s.id);
   s.room = null; s.player = null;
   if (humanCount(room) === 0) { rooms.delete(room.code); }      // no humans -> drop match (and its bots)
@@ -696,16 +744,11 @@ function botThink(room, bot) {
 function startMatch(room) {
   fillWithBots(room);
   setupRound(room);
-  room.pot = room.wager * MATCH_SIZE;   // bots count toward the pot too
-  if (room.wager > 0) {                 // escrow each human's wager up front
-    for (const s of room.members.values()) {
-      if (!s.isBot) {
-        s.credits = Math.max(0, (s.credits || 0) - room.wager);
-        store.updateCredits(s.key, s.credits).catch(e => console.error('debit failed:', e.message));
-        try { s.conn.send(JSON.stringify({ t: 'credits', credits: s.credits })); } catch (e) {}
-      }
-    }
-  }
+  // Wagers were already escrowed when each human joined (findMatch). The pot is the
+  // sum of REAL wagers collected — bots add nothing, so the house never funds winnings.
+  let collected = 0;
+  for (const s of room.members.values()) if (!s.isBot && s.wagerPaid > 0) collected += s.wagerPaid;
+  room.pot = collected;
   room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
   broadcastRoom(room);
 }
@@ -740,12 +783,11 @@ function updateRoom(room, dt) {
       room.winnerName = winner ? winner.username : null;
       if (winner && !winner.isBot && winner.key) {
         let payout = 0;
-        if (room.wager > 0) {
-          payout = Math.floor(room.pot * 0.9);   // winner takes the pot minus 10% platform fee
-          winner.credits = (winner.credits || 0) + payout;
-          store.updateCredits(winner.key, winner.credits).catch(e => console.error('payout failed:', e.message));
+        if (room.pot > 0) {
+          payout = Math.floor(room.pot * 0.9);   // winner takes the pot (real stakes) minus 10% fee
+          changeCredits(winner.key, payout).then(nc => { winner.credits = nc; }).catch(e => console.error('payout failed:', e.message));
         }
-        store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w), credits: winner.credits, payout: payout }; })
+        store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w), payout: payout }; })
           .catch(e => console.error('recordWin failed:', e.message));
       }
       room.phase = 'roundover'; room.phaseTimer = ROUNDOVER_S;
@@ -782,7 +824,7 @@ function sendSearch(room) {
     t: 'searching',
     found: humanCount(room),
     target: MATCH_SIZE, secs: Math.max(0, Math.ceil(room.fillTimer)),
-    wager: room.wager, pot: room.wager * MATCH_SIZE,
+    wager: room.wager, pot: room.wager * humanCount(room),
     members: memberList(room),
   });
   for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
@@ -835,7 +877,7 @@ ws.attach(server, (conn) => {
   const s = { id: nextSessionId++, conn, username: null, key: null, room: null, player: null, isBot: false };
   allSessions.set(s.id, s);
 
-  conn.on('message', (raw) => {
+  conn.on('message', async (raw) => {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
 
     if (m.t === 'auth') {
@@ -854,8 +896,14 @@ ws.attach(server, (conn) => {
     if (!s.username) return; // everything below requires auth
 
     if (m.t === 'findMatch') {
+      if (s.room) leaveMatch(s, true);                 // leave (and refund) any current queue first
       const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
-      if (wager > 0 && (s.credits || 0) < wager) { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that wager.' })); return; }
+      if (wager > 0) {
+        const deb = await debitIfEnough(s.key, wager); // escrow the stake on join (atomic)
+        if (!deb.ok) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that wager.' })); } catch (e) {} return; }
+        s.credits = deb.credits; s.wagerPaid = wager;
+        try { conn.send(JSON.stringify({ t: 'credits', credits: deb.credits })); } catch (e) {}
+      } else { s.wagerPaid = 0; }
       addToMatch(s, wager);
     } else if (m.t === 'leaveMatch') {
       leaveMatch(s, false);
@@ -865,12 +913,6 @@ ws.attach(server, (conn) => {
         s.player.input.right = !!m.right;
         s.player.input.jump = !!m.jump;
       }
-    } else if (m.t === 'requestWithdraw') {
-      const amt = Math.floor(Number(m.amount) || 0);
-      if (amt <= 0) { conn.send(JSON.stringify({ t: 'withdrawResult', error: 'Enter a valid amount.' })); return; }
-      store.createWithdrawal(s.key, amt).then(() => {
-        conn.send(JSON.stringify({ t: 'withdrawResult', ok: true, amount: amt }));
-      }).catch(e => { console.error('withdraw failed:', e.message); conn.send(JSON.stringify({ t: 'withdrawResult', error: 'Could not submit request.' })); });
     }
   });
 
