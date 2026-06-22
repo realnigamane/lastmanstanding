@@ -45,6 +45,30 @@ const sessionsByToken = new Map(); // token -> user key
 const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 64).toString('hex');
 const makeToken = () => crypto.randomBytes(24).toString('hex');
 
+// Stateless signed sessions: the token carries its own expiry and is verified by
+// HMAC, so it survives server restarts / free-tier spin-downs (no in-memory state
+// to lose) and stays valid for SESSION_TTL_MS before the user must log in again.
+const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+const SESSION_SECRET = process.env.SESSION_SECRET || process.env.SUPABASE_SERVICE_KEY || 'lms-fallback-session-secret';
+const b64u = (b) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function signSession(key, isAdmin) {
+  const payload = b64u(JSON.stringify({ k: key, a: isAdmin ? 1 : 0, exp: Date.now() + SESSION_TTL_MS }));
+  const sig = b64u(crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest());
+  return payload + '.' + sig;
+}
+function readSession(token) {
+  if (!token || typeof token !== 'string') return null;
+  const dot = token.indexOf('.'); if (dot < 1) return null;
+  const payload = token.slice(0, dot), sig = token.slice(dot + 1);
+  const expect = b64u(crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest());
+  const a = Buffer.from(sig), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let obj; try { obj = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()); } catch (e) { return null; }
+  if (!obj || !obj.k || !obj.exp || Date.now() > obj.exp) return null;
+  return obj;
+}
+const sessionKey = (token) => { const s = readSession(token); return s ? s.k : null; };
+
 async function registerUser(username, password) {
   username = String(username || '').trim();
   if (username.length < 3 || username.length > 16) return { error: 'Username must be 3-16 characters.' };
@@ -58,7 +82,7 @@ async function registerUser(username, password) {
                  credits: 0, wins: 0, created_at: new Date().toISOString() };
   try { await store.createUser(user); }
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
-  const token = makeToken(); sessionsByToken.set(token, key);
+  const token = signSession(key, key === ADMIN_USER);
   return { ok: true, token, username, credits: 0 };
 }
 async function loginUser(username, password) {
@@ -70,7 +94,7 @@ async function loginUser(username, password) {
     ok = crypto.timingSafeEqual(Buffer.from(hashPw(password, u.salt), 'hex'), Buffer.from(u.hash, 'hex'));
   } catch (e) { ok = false; }
   if (!ok) return { error: 'Incorrect password.' };
-  const token = makeToken(); sessionsByToken.set(token, key);
+  const token = signSession(key, key === ADMIN_USER);
   return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER };
 }
 
@@ -116,7 +140,7 @@ function rateLimited(ip, bucket, max, windowMs) {
 }
 
 // =================== Admin ===================
-function isAdminToken(token) { return token && sessionsByToken.get(token) === ADMIN_USER; }
+function isAdminToken(token) { const s = readSession(token); return !!(s && s.a); }
 
 // A live snapshot of everything the admin portal needs: active games + online players.
 function adminOverview() {
@@ -209,7 +233,7 @@ async function btcpayGetInvoice(invoiceId) {
   return await r.json();
 }
 async function handleDepositCreate(token, amount) {
-  const key = sessionsByToken.get(token);
+  const key = sessionKey(token);
   if (!key) return { error: 'Please log in again.' };
   amount = Math.floor(Number(amount) || 0);
   if (amount < 1 || amount > 10000) return { error: 'Enter an amount between 1 and 10000.' };
@@ -249,7 +273,7 @@ async function btcpayGetPayout(payoutId) {
   return await r.json();
 }
 async function handleWithdrawCreate(token, amount, coin, address) {
-  const key = sessionsByToken.get(token);
+  const key = sessionKey(token);
   if (!key) return { error: 'Please log in again.' };
   amount = Math.floor(Number(amount) || 0);
   coin = (coin === 'LTC' || coin === 'BTC') ? coin : null;
@@ -881,7 +905,7 @@ ws.attach(server, (conn) => {
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
 
     if (m.t === 'auth') {
-      const key = sessionsByToken.get(m.token);
+      const key = sessionKey(m.token);
       if (!key) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
       store.getUser(key).then((u) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
