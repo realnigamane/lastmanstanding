@@ -399,16 +399,16 @@ const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // wait for humans,
 const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
-const SCROLL_START = 22;    // px/sec at the start of a round
-const SCROLL_RAMP = 1.9;    // added px/sec each second — gentle so the climb stays playable
-const SCROLL_MAX = 118;     // hardest steady speed (still climbable; deaths come from misses/balls)
+const SCROLL_START = 27;    // px/sec at the start of a round
+const SCROLL_RAMP = 2.1;    // added px/sec each second — gentle so the climb stays playable
+const SCROLL_MAX = 130;     // hardest steady speed (still climbable; deaths come from misses/balls)
 const PLAT_H = 16;
 const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
 const SPREAD = 110;                  // max horizontal shift between rungs — always within a jump's reach
 
 // Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 12, HAZARD_MAX = 6;           // calm opening: first ball at 12s, then ramps up
+const HAZARD_FIRST = 12, HAZARD_MAX = 5;           // calm opening: first ball at 12s, then ramps up
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -513,7 +513,7 @@ function reachableX(room, width) {
   return cx - width / 2;
 }
 function makePlatform(room, y, width, moving) {
-  const w = width != null ? width : 110 + Math.floor(Math.random() * 80);
+  const w = width != null ? width : 135 + Math.floor(Math.random() * 85);
   const x = reachableX(room, w);
   const p = { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: 0, dx: 0 };
   if (moving) { p.homeX = x; p.amp = 18 + Math.random() * 18; p.phase = Math.random() * 6.283; p.spd = 0.018 + Math.random() * 0.018; }
@@ -646,7 +646,7 @@ function hazardFactor(room) {
 }
 function targetHazards(room) {
   if (room.roundTime < HAZARD_FIRST) return 0;
-  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 9) + Math.floor(room.eliminated / 2));
+  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 11) + Math.floor(room.eliminated / 3));
 }
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
