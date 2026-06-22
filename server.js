@@ -187,6 +187,60 @@ async function handleDepositCreate(token, amount) {
   try { await store.addTx({ username_lower: key, kind: 'deposit_pending', amount, room_code: inv.id }); } catch (e) {}
   return { ok: true, checkoutLink: inv.checkoutLink, invoiceId: inv.id };
 }
+// ---- Withdrawals (automated payouts) ----
+const WITHDRAW_MIN = 10;     // USD/credits
+const WITHDRAW_MAX = 1000;   // largest single auto-payout
+
+async function btcpayCreatePayout(coin, address, usd) {
+  const method = coin === 'LTC' ? 'LTC-CHAIN' : 'BTC-CHAIN';
+  const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'token ' + BTCPAY_KEY },
+    body: JSON.stringify({ destination: address, amount: String(usd), payoutMethodId: method, approved: true }),
+  });
+  if (!r.ok) throw new Error('btcpay createPayout ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function btcpayGetPayout(payoutId) {
+  const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts/' + payoutId, {
+    headers: { 'Authorization': 'token ' + BTCPAY_KEY },
+  });
+  if (!r.ok) throw new Error('btcpay getPayout ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function handleWithdrawCreate(token, amount, coin, address) {
+  const key = sessionsByToken.get(token);
+  if (!key) return { error: 'Please log in again.' };
+  amount = Math.floor(Number(amount) || 0);
+  coin = (coin === 'LTC' || coin === 'BTC') ? coin : null;
+  address = String(address || '').trim();
+  if (!coin) return { error: 'Choose BTC or LTC.' };
+  if (address.length < 20 || address.length > 120) return { error: 'Enter a valid ' + (coin || '') + ' address.' };
+  if (amount < WITHDRAW_MIN) return { error: 'Minimum withdrawal is ' + WITHDRAW_MIN + ' credits.' };
+  if (amount > WITHDRAW_MAX) return { error: 'Max auto-withdrawal is ' + WITHDRAW_MAX + ' credits — split larger cash-outs.' };
+  if (!btcpayConfigured()) return { error: 'Withdrawals are not enabled yet.' };
+  const u = await store.getUser(key);
+  if (!u || (u.credits || 0) < amount) return { error: 'You do not have enough credits.' };
+  // Deduct first (escrow) so the same credits can't be withdrawn twice.
+  const newC = (u.credits || 0) - amount;
+  await store.updateCredits(key, newC);
+  reflectCredits(key, newC);
+  let payout;
+  try {
+    payout = await btcpayCreatePayout(coin, address, amount);
+  } catch (e) {
+    console.error('withdraw payout failed:', e.message);
+    const u2 = await store.getUser(key);              // refund the escrow on failure
+    const back = (u2 ? (u2.credits || 0) : 0) + amount;
+    await store.updateCredits(key, back); reflectCredits(key, back);
+    if (/node not available|payment method|not.*sync/i.test(e.message)) return { error: 'Withdrawals are warming up — the payout node is still syncing. Try again later.' };
+    if (/destination|address|invalid|bip21/i.test(e.message)) return { error: 'That ' + coin + ' address looks invalid — double-check it.' };
+    return { error: 'Could not start the withdrawal right now. Try again shortly.' };
+  }
+  try { await store.addTx({ username_lower: key, kind: 'withdraw', amount, room_code: payout.id }); } catch (e) {}
+  return { ok: true, payoutId: payout.id, credits: newC };
+}
+
 // Verify the BTCPay-Sig HMAC over the raw body, then credit on a settled invoice (idempotent).
 async function handleBtcpayWebhook(req, rawBody) {
   if (!BTCPAY_WH_SECRET) return 503;
@@ -208,6 +262,18 @@ async function handleBtcpayWebhook(req, rawBody) {
         await store.updateCredits(key, newC);
         reflectCredits(key, newC);
         await store.addTx({ username_lower: key, kind: 'deposit', amount: amt, room_code: ev.invoiceId });
+      }
+    }
+  }
+  // Payout was cancelled -> refund the player's escrowed credits (idempotent).
+  if (ev.type && ev.type.indexOf('Payout') === 0 && ev.payoutId) {
+    const p = await btcpayGetPayout(ev.payoutId);
+    if (p && p.state === 'Cancelled' && !(await store.txExists('withdraw_refunded', ev.payoutId))) {
+      const row = await store.getTx('withdraw', ev.payoutId);
+      if (row) {
+        const u = await store.getUser(row.username_lower);
+        if (u) { const back = (u.credits || 0) + row.amount; await store.updateCredits(row.username_lower, back); reflectCredits(row.username_lower, back); }
+        await store.addTx({ username_lower: row.username_lower, kind: 'withdraw_refunded', amount: row.amount, room_code: ev.payoutId });
       }
     }
   }
@@ -251,6 +317,7 @@ const server = http.createServer((req, res) => {
         if (req.url === '/api/register') result = await registerUser(data.username, data.password);
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
         else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
+        else if (req.url === '/api/withdraw/create') result = await handleWithdrawCreate(data.token, data.amount, data.coin, data.address);
         else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
         res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));

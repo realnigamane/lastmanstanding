@@ -136,11 +136,21 @@
       window.open(d.checkoutLink, '_blank');
     } catch (e) { $('depMsg').textContent = 'Could not start deposit. Try again.'; }
   };
-  $('btnWithdraw').onclick = () => {
+  $('btnWithdraw').onclick = async () => {
     const amt = parseInt($('wdAmt').value, 10);
-    if (!amt || amt <= 0) { $('wdMsg').textContent = 'Enter a valid amount.'; return; }
+    const coin = $('wdCoin').value;
+    const address = $('wdAddr').value.trim();
+    if (!amt || amt < 10) { $('wdMsg').textContent = 'Minimum withdrawal is 10 credits.'; return; }
+    if (!address) { $('wdMsg').textContent = 'Enter your ' + coin + ' address.'; return; }
     $('wdMsg').textContent = 'Submitting…';
-    sendWS({ t: 'requestWithdraw', amount: amt });
+    try {
+      const r = await fetch('/api/withdraw/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken, amount: amt, coin: coin, address: address }) });
+      const d = await r.json();
+      if (d.error) { $('wdMsg').textContent = d.error; return; }
+      if (d.credits != null) { myCredits = d.credits; $('hmCredits').textContent = d.credits; }
+      $('wdMsg').textContent = '✓ Withdrawal sent — it pays out automatically.';
+      $('wdAmt').value = '';
+    } catch (e) { $('wdMsg').textContent = 'Could not submit withdrawal. Try again.'; }
   };
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
   document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });

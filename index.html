@@ -174,9 +174,14 @@
         </div>
         <div class="card">
           <h2>Withdraw</h2>
-          <p class="sub" style="margin:0 0 10px">Request a payout of your credits.</p>
-          <input id="wdAmt" type="number" min="1" placeholder="Amount (credits)" />
-          <button id="btnWithdraw" class="wide">Request withdrawal</button>
+          <p class="sub" style="margin:0 0 10px">Cash out to your own wallet — paid automatically. Min 10 credits.</p>
+          <select id="wdCoin" style="width:100%;padding:12px 14px;font-size:16px;border-radius:10px;border:1px solid #34406e;background:#0e1326;color:#fff;margin-bottom:8px">
+            <option value="BTC">Bitcoin (BTC)</option>
+            <option value="LTC">Litecoin (LTC)</option>
+          </select>
+          <input id="wdAddr" placeholder="Your BTC / LTC address" />
+          <input id="wdAmt" type="number" min="10" placeholder="Amount (credits)" />
+          <button id="btnWithdraw" class="wide">Withdraw</button>
           <div id="wdMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
         </div>
       </div>
