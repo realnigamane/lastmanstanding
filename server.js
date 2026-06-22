@@ -330,7 +330,7 @@ const server = http.createServer((req, res) => {
       }
       let data = {}; try { data = JSON.parse(body || '{}'); } catch (e) {}
       const ip = clientIp(req);
-      if ((req.url === '/api/register' && rateLimited(ip, 'register', 5, 3600000)) ||
+      if ((req.url === '/api/register' && rateLimited(ip, 'register', 30, 3600000)) ||
           (req.url === '/api/login' && rateLimited(ip, 'login', 20, 600000)) ||
           (req.url === '/api/withdraw/create' && rateLimited(ip, 'withdraw', 8, 3600000)) ||
           (req.url === '/api/deposit/create' && rateLimited(ip, 'deposit', 30, 3600000))) {
