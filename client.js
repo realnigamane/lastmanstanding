@@ -124,7 +124,18 @@
   // ---------- Home / dashboard ----------
   $('btnFind').onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch' })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; };
   $('btnLogout').onclick = () => { localStorage.removeItem('lms_token'); location.reload(); };
-  $('btnDeposit').onclick = () => { $('depMsg').textContent = 'Crypto deposits are coming soon — not enabled yet.'; };
+  $('btnDeposit').onclick = async () => {
+    const amt = parseInt($('depAmt').value, 10);
+    if (!amt || amt <= 0) { $('depMsg').textContent = 'Enter a valid amount.'; return; }
+    $('depMsg').textContent = 'Creating your invoice…';
+    try {
+      const r = await fetch('/api/deposit/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken, amount: amt }) });
+      const d = await r.json();
+      if (d.error) { $('depMsg').textContent = d.error; return; }
+      $('depMsg').textContent = 'Opening payment window — your balance updates once the payment confirms on-chain.';
+      window.open(d.checkoutLink, '_blank');
+    } catch (e) { $('depMsg').textContent = 'Could not start deposit. Try again.'; }
+  };
   $('btnWithdraw').onclick = () => {
     const amt = parseInt($('wdAmt').value, 10);
     if (!amt || amt <= 0) { $('wdMsg').textContent = 'Enter a valid amount.'; return; }

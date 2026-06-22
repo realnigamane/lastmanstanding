@@ -141,6 +141,70 @@ async function adminHandleWithdrawal(id, action) {
   return { ok: true, id: row.id, status: 'approved', deducted, credits: newC };
 }
 
+// =================== BTCPay deposits ===================
+const BTCPAY_URL = (process.env.BTCPAY_URL || '').replace(/\/+$/, '');
+const BTCPAY_KEY = process.env.BTCPAY_API_KEY || '';
+const BTCPAY_STORE = process.env.BTCPAY_STORE_ID || '';
+const BTCPAY_WH_SECRET = process.env.BTCPAY_WEBHOOK_SECRET || '';
+function btcpayConfigured() { return !!(BTCPAY_URL && BTCPAY_KEY && BTCPAY_STORE); }
+
+async function btcpayCreateInvoice(amountUsd, userKey) {
+  const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/invoices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'token ' + BTCPAY_KEY },
+    body: JSON.stringify({
+      amount: String(amountUsd), currency: 'USD',
+      metadata: { username: userKey, orderId: 'dep-' + userKey + '-' + Date.now() },
+      checkout: { redirectURL: 'https://lastduckstanding.io/' },
+    }),
+  });
+  if (!r.ok) throw new Error('btcpay createInvoice ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function btcpayGetInvoice(invoiceId) {
+  const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/invoices/' + invoiceId, {
+    headers: { 'Authorization': 'token ' + BTCPAY_KEY },
+  });
+  if (!r.ok) throw new Error('btcpay getInvoice ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function handleDepositCreate(token, amount) {
+  const key = sessionsByToken.get(token);
+  if (!key) return { error: 'Please log in again.' };
+  amount = Math.floor(Number(amount) || 0);
+  if (amount < 1 || amount > 10000) return { error: 'Enter an amount between 1 and 10000.' };
+  if (!btcpayConfigured()) return { error: 'Deposits are not enabled yet.' };
+  const inv = await btcpayCreateInvoice(amount, key);
+  try { await store.addTx({ username_lower: key, kind: 'deposit_pending', amount, room_code: inv.id }); } catch (e) {}
+  return { ok: true, checkoutLink: inv.checkoutLink, invoiceId: inv.id };
+}
+// Verify the BTCPay-Sig HMAC over the raw body, then credit on a settled invoice (idempotent).
+async function handleBtcpayWebhook(req, rawBody) {
+  if (!BTCPAY_WH_SECRET) return 503;
+  const sig = req.headers['btcpay-sig'] || '';
+  const expected = 'sha256=' + crypto.createHmac('sha256', BTCPAY_WH_SECRET).update(rawBody, 'utf8').digest('hex');
+  let ok = false;
+  try { ok = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected)); } catch (e) { ok = false; }
+  if (!ok) return 400;
+  let ev = {}; try { ev = JSON.parse(rawBody); } catch (e) { return 400; }
+  if (ev.type === 'InvoiceSettled' && ev.invoiceId) {
+    if (await store.txExists('deposit', ev.invoiceId)) return 200;   // already credited
+    const inv = await btcpayGetInvoice(ev.invoiceId);
+    const amt = Math.floor(Number(inv.amount) || 0);
+    const key = inv.metadata && inv.metadata.username;
+    if (key && amt > 0) {
+      const u = await store.getUser(key);
+      if (u) {
+        const newC = (u.credits || 0) + amt;
+        await store.updateCredits(key, newC);
+        reflectCredits(key, newC);
+        await store.addTx({ username_lower: key, kind: 'deposit', amount: amt, room_code: ev.invoiceId });
+      }
+    }
+  }
+  return 200;
+}
+
 // =================== HTTP (static + auth/admin API) ===================
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
@@ -150,6 +214,12 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 10000) req.destroy(); });
     req.on('end', async () => {
+      // BTCPay webhook — verify the HMAC over the RAW body before anything else.
+      if (req.url === '/api/btcpay/webhook') {
+        try { const status = await handleBtcpayWebhook(req, body); res.writeHead(status, { 'Content-Type': 'application/json' }); res.end('{}'); }
+        catch (e) { console.error('btcpay webhook error:', e.message); res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{}'); }
+        return;
+      }
       let data = {}; try { data = JSON.parse(body || '{}'); } catch (e) {}
       try {
         // Admin routes require a valid admin session token.
@@ -171,6 +241,7 @@ const server = http.createServer((req, res) => {
         let result;
         if (req.url === '/api/register') result = await registerUser(data.username, data.password);
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
+        else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
         else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
         res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));

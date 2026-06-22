@@ -81,6 +81,22 @@ async function sbSetWithdrawalStatus(id, status) {
   if (!r.ok) throw new Error('Supabase setWithdrawalStatus ' + r.status + ': ' + (await r.text()));
 }
 
+// ---- transactions (Supabase) ----
+async function sbTxExists(kind, ref) {
+  const url = SB_URL + '/rest/v1/game_transactions?kind=eq.' + encodeURIComponent(kind) + '&room_code=eq.' + encodeURIComponent(ref) + '&select=id&limit=1';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase txExists ' + r.status + ': ' + (await r.text()));
+  const rows = await r.json();
+  return rows.length > 0;
+}
+async function sbAddTx(t) {
+  const r = await fetch(SB_URL + '/rest/v1/game_transactions', {
+    method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }),
+    body: JSON.stringify({ username_lower: t.username_lower, kind: t.kind, amount: t.amount, room_code: t.room_code || null }),
+  });
+  if (!r.ok) throw new Error('Supabase addTx ' + r.status + ': ' + (await r.text()));
+}
+
 // ---------------- Local file backend ----------------
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
@@ -127,11 +143,24 @@ async function fileSetWithdrawalStatus(id, status) {
   const row = withdrawals.find((w, i) => String(w.id != null ? w.id : i) === String(id));
   if (row) { row.status = status; saveWithdrawals(); }
 }
+// ---- transactions (file) ----
+const TX_FILE = path.join(DATA_DIR, 'transactions.json');
+let txs = [];
+try { txs = JSON.parse(fs.readFileSync(TX_FILE, 'utf8')); } catch (e) { txs = []; }
+async function fileTxExists(kind, ref) {
+  return txs.some(t => t.kind === kind && String(t.room_code) === String(ref));
+}
+async function fileAddTx(t) {
+  txs.push({ username_lower: t.username_lower, kind: t.kind, amount: t.amount, room_code: t.room_code || null, created_at: new Date().toISOString() });
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(TX_FILE, JSON.stringify(txs, null, 2)); } catch (e) {}
+}
 
 module.exports = useSupabase
   ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
       recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
-      listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus }
+      listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus,
+      txExists: sbTxExists, addTx: sbAddTx }
   : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
       recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
-      listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus };
+      listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus,
+      txExists: fileTxExists, addTx: fileAddTx };
