@@ -220,7 +220,7 @@ const SPREAD = 110;                  // max horizontal shift between rungs — a
 
 // Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 6, HAZARD_MAX = 6;            // first ball at 6s, ramps up to 6 at peak
+const HAZARD_FIRST = 12, HAZARD_MAX = 6;           // calm opening: first ball at 12s, then ramps up
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -443,12 +443,15 @@ function resetHazard(b) {
   b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
   b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 2;
 }
-// Balls get nastier as the round drags on AND as more players are eliminated.
+// Calm opening, hectic late: balls only appear after HAZARD_FIRST, then get faster and
+// more numerous the longer the round runs and the more players are eliminated.
 function hazardFactor(room) {
-  return 1 + Math.min(1.25, room.roundTime * 0.010 + room.eliminated * 0.06);
+  const t = Math.max(0, room.roundTime - HAZARD_FIRST);
+  return 1 + Math.min(1.7, t * 0.018 + room.eliminated * 0.07);
 }
 function targetHazards(room) {
-  return Math.min(HAZARD_MAX, 1 + Math.floor(Math.max(0, room.roundTime - 6) / 8) + Math.floor(room.eliminated / 2));
+  if (room.roundTime < HAZARD_FIRST) return 0;
+  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 9) + Math.floor(room.eliminated / 2));
 }
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
@@ -457,14 +460,19 @@ function stepHazards(room) {
     b.vy += HAZARD_GRAV * hf;
     b.x += b.vx * hf;
     b.y += b.vy + scrollPx;
-    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); }
-    if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx); }
+    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx) * (0.85 + Math.random() * 0.6); }
+    if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx) * (0.85 + Math.random() * 0.6); }
     if (b.y < b.r) { b.y = b.r; b.vy = Math.abs(b.vy) * 0.6; }
     if (b.vy > 0) {
       for (const plat of room.platforms) {
         if (b.x + b.r > plat.x && b.x - b.r < plat.x + plat.w &&
             b.y + b.r >= plat.y && b.y + b.r <= plat.y + plat.h + 14) {
-          b.y = plat.y - b.r; b.vy = HAZARD_BOUNCE * hf * (0.85 + Math.random() * 0.3); break;
+          b.y = plat.y - b.r;
+          b.vy = HAZARD_BOUNCE * hf * (0.85 + Math.random() * 0.3);
+          b.vx += (Math.random() * 2 - 1) * 2.4;            // unpredictable sideways kick on every bounce
+          if (Math.random() < 0.18) b.vx = -b.vx;           // sometimes reverse outright — no learnable pattern
+          b.vx = Math.max(-7, Math.min(7, b.vx));           // bounded so balls stay on-screen and fair
+          break;
         }
       }
     }
@@ -573,7 +581,8 @@ function updateRoom(room, dt) {
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
-      room.nextHazardAt = room.roundTime + Math.max(2.2, 7 - room.eliminated * 0.4 - room.roundTime * 0.03);
+      const ramp = Math.max(0, room.roundTime - HAZARD_FIRST);
+      room.nextHazardAt = room.roundTime + Math.max(2.0, 8.5 - room.eliminated * 0.4 - ramp * 0.06);
     }
     for (const s of room.members.values()) if (s.isBot) botThink(room, s);
     stepPhysics(room);
