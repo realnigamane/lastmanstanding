@@ -65,23 +65,19 @@
   .slot.bot { background: #46508c; border-color: #5d68b8; }
 
   /* Game */
-  #stage { position: relative; }
+  #gameWrap { position: relative; }
   canvas {
     background: linear-gradient(#0e1838, #0b0e1a 70%, #160b16);
     border: 2px solid #2a3358; border-radius: 10px;
     box-shadow: 0 20px 60px rgba(0,0,0,.5); display: block;
   }
-  body.touch canvas { border: none; border-radius: 0; box-shadow: none; }
-  /* Portrait phones: rotate the whole stage (canvas + controls) 90° so the play
-     area fills the LONG edge of the screen instead of being letterboxed small. */
-  body.rotated #stage { transform: rotate(90deg); transform-origin: center center; }
   #hint { color: #8b95c9; font-size: 13px; text-align: center; margin-top: 8px; padding: 0 10px; }
   #hint b { color: #c9d2ff; }
 
-  /* Mobile controls — positioned inside #stage so they rotate with the play area */
-  #touch { display: none; position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+  /* Mobile controls — fixed to the screen edges, off the play field */
+  #touch { display: none; position: fixed; inset: 0; z-index: 5; pointer-events: none; }
   body.touch.playing #touch { display: block; }
-  .pad { position: absolute; bottom: 18px; display: flex; gap: 16px; pointer-events: none; }
+  .pad { position: fixed; bottom: 18px; display: flex; gap: 16px; pointer-events: none; }
   .pad.left { left: 18px; } .pad.right { right: 18px; }
   .tbtn {
     pointer-events: auto; width: 74px; height: 74px; border-radius: 50%;
@@ -92,6 +88,10 @@
   }
   .tbtn.active { background: rgba(91,104,184,.75); transform: scale(.94); }
   .tbtn.jump { width: 96px; height: 96px; font-size: 18px; border-color: rgba(75,227,255,.6); }
+  #rotatehint { display: none; position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,26,49,.9); color: #cdd6ff; padding: 7px 14px; border-radius: 9px;
+    font-size: 12px; z-index: 8; pointer-events: none; border: 1px solid #34406e; }
+  @media (orientation: portrait) { body.touch.playing #rotatehint { display: block; } }
 
   /* Dashboard */
   .dash { width: min(560px, 96vw); display: flex; flex-direction: column; gap: 14px; }
@@ -197,19 +197,21 @@
 
   <!-- GAME -->
   <div id="game" class="screen">
-    <div id="stage">
+    <div id="gameWrap">
       <canvas id="canvas" width="960" height="600"></canvas>
-      <div id="touch">
-        <div class="pad left">
-          <button id="btnLeft" class="tbtn">◀</button>
-          <button id="btnRight" class="tbtn">▶</button>
-        </div>
-        <div class="pad right">
-          <button id="btnJump" class="tbtn jump">JUMP</button>
-        </div>
-      </div>
     </div>
     <div id="hint">Move <b>← →</b> / <b>A D</b> &nbsp;·&nbsp; Jump <b>Space</b> / <b>↑</b> / <b>W</b> &nbsp;·&nbsp; Keep climbing — don't let the floor catch you!</div>
+  </div>
+
+  <div id="rotatehint">↻ Rotate your phone sideways for a bigger view</div>
+  <div id="touch">
+    <div class="pad left">
+      <button id="btnLeft" class="tbtn">◀</button>
+      <button id="btnRight" class="tbtn">▶</button>
+    </div>
+    <div class="pad right">
+      <button id="btnJump" class="tbtn jump">JUMP</button>
+    </div>
   </div>
 
   <script src="client.js"></script>

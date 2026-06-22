@@ -186,22 +186,12 @@
   bindHold($('btnLeft'), 'left'); bindHold($('btnRight'), 'right'); bindHold($('btnJump'), 'jump');
 
   function resizeCanvas() {
-    // On a portrait phone, rotate the landscape play-field 90° so it fills the LONG
-    // edge of the screen — far bigger than letterboxing it across the short edge.
-    const portrait = window.innerHeight > window.innerWidth;
-    const rotate = isTouch && portrait;
-    document.body.classList.toggle('rotated', rotate);
-    const vw = rotate ? window.innerHeight : window.innerWidth;
-    const vh = rotate ? window.innerWidth : window.innerHeight;
     const ratio = W / H, pad = isTouch ? 0 : 24, reserveH = isTouch ? 0 : 70;
-    let availW = vw - pad * 2, availH = vh - reserveH;
+    let availW = window.innerWidth - pad * 2, availH = window.innerHeight - reserveH;
     let cw = availW, ch = availW / ratio;
     if (ch > availH) { ch = availH; cw = availH * ratio; }
-    cw = Math.floor(cw); ch = Math.floor(ch);
-    canvas.style.width = cw + 'px';
-    canvas.style.height = ch + 'px';
-    const st = $('stage');               // size the stage to the canvas so controls + rotation line up
-    if (st) { st.style.width = cw + 'px'; st.style.height = ch + 'px'; }
+    canvas.style.width = Math.floor(cw) + 'px';
+    canvas.style.height = Math.floor(ch) + 'px';
     if (isTouch) {                       // use the whole screen on phones
       const g = $('game'); if (g) g.style.padding = '0';
       const h = $('hint'); if (h) h.style.display = 'none';
