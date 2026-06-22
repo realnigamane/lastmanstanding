@@ -1,4 +1,4 @@
-// Last Man Standing - multiplayer server (zero dependencies).
+// Last Duck Standing - multiplayer server (zero dependencies).
 // Accounts + automatic matchmaking + competitive AI bots + climb-or-die gameplay.
 // Run:  node server.js   then open http://localhost:3000
 const http = require('http');
@@ -725,7 +725,7 @@ ws.attach(server, (conn) => {
 });
 
 server.listen(PORT, () => {
-  console.log('Last Man Standing running at  http://localhost:' + PORT);
+  console.log('Last Duck Standing running at  http://localhost:' + PORT);
   console.log('Accounts storage: ' + (store.backend === 'supabase' ? 'Supabase (Postgres)' : 'local file (data/users.json)'));
   console.log('Sign in, hit Find Match — bots fill any empty slots so a game always starts.');
 });

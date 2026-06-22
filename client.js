@@ -1,4 +1,4 @@
-// Last Man Standing - client (accounts + matchmaking + climb-or-die game)
+// Last Duck Standing - client (accounts + matchmaking + climb-or-die game)
 (function () {
   const $ = (id) => document.getElementById(id);
   const canvas = $('canvas'), ctx = canvas.getContext('2d');
@@ -180,7 +180,7 @@
     if (ch > availH) { ch = availH; cw = availH * ratio; }
     canvas.style.width = Math.floor(cw) + 'px';
     canvas.style.height = Math.floor(ch) + 'px';
-    if (isTouch) {
+    if (isTouch) {                       // use the whole screen on phones
       const g = $('game'); if (g) g.style.padding = '0';
       const h = $('hint'); if (h) h.style.display = 'none';
     }
