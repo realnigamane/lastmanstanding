@@ -346,11 +346,11 @@ async function handleBtcpayWebhook(req, rawBody) {
 }
 
 // =================== Live crypto prices (deposit/withdraw converters) ===================
-// Cached ~60s so we never hammer the price source. USD per 1 BTC / 1 LTC.
+// Cached ~30s so we never hammer the price source. USD per 1 BTC / 1 LTC.
 let ratesCache = { at: 0, btc: 0, ltc: 0 };
 async function fetchRates() {
   const now = Date.now();
-  if (now - ratesCache.at < 60000 && ratesCache.btc && ratesCache.ltc) return ratesCache;
+  if (now - ratesCache.at < 30000 && ratesCache.btc && ratesCache.ltc) return ratesCache;
   try {
     const [b, l] = await Promise.all([
       fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot').then(r => r.json()),

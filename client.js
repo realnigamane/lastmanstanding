@@ -183,7 +183,7 @@
     if ($('wdAmt').value) wdFromUsd();
   }
   loadRates();
-  setInterval(loadRates, 60000);
+  setInterval(loadRates, 30000);
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
   document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });
 
