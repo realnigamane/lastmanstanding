@@ -466,7 +466,7 @@ const SPREAD = 110;                  // max horizontal shift between rungs — a
 
 // Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 12, HAZARD_MAX = 4;           // calm opening: first ball at 12s, then ramps up
+const HAZARD_FIRST = 13, HAZARD_MAX = 4;           // calm opening: first ball at 13s, then ramps up
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -690,13 +690,13 @@ function spawnHazard(room) {
     id: hazSeq++,
     x: HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R),
     y: -HAZARD_R - 10,
-    vx: (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1),
-    vy: 2 + Math.random() * 2, r: HAZARD_R,
+    vx: (1.5 + Math.random() * 4.5) * (Math.random() < 0.5 ? -1 : 1),
+    vy: 1.5 + Math.random() * 3, r: HAZARD_R,
   });
 }
 function resetHazard(b) {
   b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
-  b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 2;
+  b.y = -HAZARD_R - 10; b.vx = (1.5 + Math.random() * 4.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 1.5 + Math.random() * 3;
 }
 // Calm opening, hectic late: balls only appear after HAZARD_FIRST, then get faster and
 // more numerous the longer the round runs and the more players are eliminated.
@@ -706,7 +706,7 @@ function hazardFactor(room) {
 }
 function targetHazards(room) {
   if (room.roundTime < HAZARD_FIRST) return 0;
-  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 14) + Math.floor(room.eliminated / 4));
+  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 16) + Math.floor(room.eliminated / 5));
 }
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
@@ -723,10 +723,11 @@ function stepHazards(room) {
         if (b.x + b.r > plat.x && b.x - b.r < plat.x + plat.w &&
             b.y + b.r >= plat.y && b.y + b.r <= plat.y + plat.h + 14) {
           b.y = plat.y - b.r;
-          b.vy = HAZARD_BOUNCE * hf * (0.85 + Math.random() * 0.3);
-          b.vx += (Math.random() * 2 - 1) * 2.4;            // unpredictable sideways kick on every bounce
-          if (Math.random() < 0.18) b.vx = -b.vx;           // sometimes reverse outright — no learnable pattern
-          b.vx = Math.max(-7, Math.min(7, b.vx));           // bounded so balls stay on-screen and fair
+          b.vy = HAZARD_BOUNCE * hf * (0.72 + Math.random() * 0.56);   // wider bounce height — less predictable
+          b.vx += (Math.random() * 2 - 1) * 3.8;            // bigger unpredictable sideways kick on every bounce
+          if (Math.random() < 0.3) b.vx = -b.vx;            // reverse more often — no learnable pattern
+          if (Math.random() < 0.12) b.vx = (1.5 + Math.random() * 6) * (Math.random() < 0.5 ? -1 : 1);  // occasional random re-roll
+          b.vx = Math.max(-8.5, Math.min(8.5, b.vx));       // bounded so balls stay on-screen and fair
           break;
         }
       }
@@ -829,7 +830,7 @@ function updateRoom(room, dt) {
     let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
     // Speed climbs a bit more from 80s, then LOCKS at the 90s pace and holds forever —
     // from there it's pure survival, not an ever-faster wall.
-    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 4;
+    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 6.4;
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
