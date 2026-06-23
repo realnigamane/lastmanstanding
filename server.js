@@ -255,12 +255,14 @@ async function handleDepositCreate(token, amount) {
 const WITHDRAW_MIN = 10;     // USD/credits
 const WITHDRAW_MAX = 1000;   // largest single auto-payout
 
-async function btcpayCreatePayout(coin, address, usd) {
+async function btcpayCreatePayout(coin, address, usd, autoApprove) {
   const method = coin === 'LTC' ? 'LTC-CHAIN' : 'BTC-CHAIN';
+  // approved:true -> the automated sender pays it right away. approved:false -> it sits in
+  // BTCPay's "Awaiting approval" queue until the operator approves it (manual review for large cash-outs).
   const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'token ' + BTCPAY_KEY },
-    body: JSON.stringify({ destination: address, amount: String(usd), payoutMethodId: method, approved: true }),
+    body: JSON.stringify({ destination: address, amount: String(usd), payoutMethodId: method, approved: autoApprove !== false }),
   });
   if (!r.ok) throw new Error('btcpay createPayout ' + r.status + ': ' + (await r.text()));
   return await r.json();
@@ -281,15 +283,18 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   if (!coin) return { error: 'Choose BTC or LTC.' };
   if (address.length < 20 || address.length > 120) return { error: 'Enter a valid ' + (coin || '') + ' address.' };
   if (amount < WITHDRAW_MIN) return { error: 'Minimum withdrawal is ' + WITHDRAW_MIN + ' credits.' };
-  if (amount > WITHDRAW_MAX) return { error: 'Max auto-withdrawal is ' + WITHDRAW_MAX + ' credits — split larger cash-outs.' };
   if (!btcpayConfigured()) return { error: 'Withdrawals are not enabled yet.' };
+  // Small cash-outs pay out automatically. Anything above WITHDRAW_MAX is created in BTCPay's
+  // "Awaiting approval" queue so the operator can manually review it before it's sent — players
+  // never see this threshold; to them it's just a withdrawal being processed.
+  const autoApprove = amount <= WITHDRAW_MAX;
   // Atomically debit the escrow — prevents concurrent withdrawals draining past balance.
   const deb = await debitIfEnough(key, amount);
   if (!deb.ok) return { error: 'You do not have enough credits.' };
   reflectCredits(key, deb.credits);
   let payout;
   try {
-    payout = await btcpayCreatePayout(coin, address, amount);
+    payout = await btcpayCreatePayout(coin, address, amount, autoApprove);
   } catch (e) {
     console.error('withdraw payout failed:', e.message);
     const back = await changeCredits(key, amount);    // refund the escrow on failure
@@ -299,7 +304,10 @@ async function handleWithdrawCreate(token, amount, coin, address) {
     return { error: 'Could not start the withdrawal right now. Try again shortly.' };
   }
   try { await store.addTx({ username_lower: key, kind: 'withdraw', amount, room_code: payout.id }); } catch (e) {}
-  return { ok: true, payoutId: payout.id, credits: deb.credits };
+  const message = autoApprove
+    ? '✓ Withdrawal sent — it pays out automatically to your wallet.'
+    : '✓ Withdrawal requested — it\'s being processed and will land in your wallet shortly.';
+  return { ok: true, payoutId: payout.id, credits: deb.credits, message };
 }
 
 // Verify the BTCPay-Sig HMAC over the raw body, then credit on a settled invoice (idempotent).

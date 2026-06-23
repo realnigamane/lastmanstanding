@@ -148,7 +148,7 @@
       const d = await r.json();
       if (d.error) { $('wdMsg').textContent = d.error; return; }
       if (d.credits != null) { myCredits = d.credits; $('hmCredits').textContent = d.credits; }
-      $('wdMsg').textContent = '✓ Withdrawal sent — it pays out automatically.';
+      $('wdMsg').textContent = d.message || '✓ Withdrawal sent — it pays out automatically.';
       $('wdAmt').value = '';
     } catch (e) { $('wdMsg').textContent = 'Could not submit withdrawal. Try again.'; }
   };
