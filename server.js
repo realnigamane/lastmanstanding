@@ -459,7 +459,7 @@ const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
 const SCROLL_START = 27;    // px/sec at the start of a round
 const SCROLL_RAMP = 2.1;    // added px/sec each second — gentle so the climb stays playable
-const SCROLL_MAX = 130;     // hardest steady speed (still climbable; deaths come from misses/balls)
+const SCROLL_MAX = 118;     // hardest steady speed (still climbable; deaths come from misses/balls)
 const PLAT_H = 16;
 const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
 const SPREAD = 110;                  // max horizontal shift between rungs — always within a jump's reach
@@ -825,7 +825,7 @@ function updateRoom(room, dt) {
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
     let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
-    if (room.roundTime > 60) ss = SCROLL_MAX + (room.roundTime - 60) * 10;   // sudden death failsafe — only kicks in late
+    if (room.roundTime > 80) ss = SCROLL_MAX + (room.roundTime - 80) * 4;   // sudden death failsafe — gentler, only kicks in very late
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
