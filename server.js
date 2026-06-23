@@ -827,7 +827,9 @@ function updateRoom(room, dt) {
   } else if (room.phase === 'playing') {
     room.roundTime += dt;
     let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
-    if (room.roundTime > 80) ss = SCROLL_MAX + (room.roundTime - 80) * 4;   // sudden death failsafe — gentler, only kicks in very late
+    // Speed climbs a bit more from 80s, then LOCKS at the 90s pace and holds forever —
+    // from there it's pure survival, not an ever-faster wall.
+    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 4;
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
