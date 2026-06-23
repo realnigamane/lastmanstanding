@@ -117,7 +117,7 @@
   .coinbtn { flex: 1; background: #1d264a; color: #9fb0e8; border: 1px solid #2a3358; border-radius: 10px; padding: 11px; font-size: 14px; font-weight: 600; }
   .coinbtn.sel { background: linear-gradient(90deg, #4be3ff, #7d5fff); color: #06122b; }
   .convgrid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 10px; }
-  .convlbl { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #8b95c9; font-weight: 600; }
+  .convlbl { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #8b95c9; font-weight: 600; white-space: nowrap; }
   .convlbl input { margin-bottom: 0; }
   .conveq { align-self: center; padding-bottom: 12px; color: #5a6cff; font-weight: 800; font-size: 18px; }
   .convrate { font-size: 12px; color: #9fffce; margin: 9px 0 12px; min-height: 15px; }
@@ -227,7 +227,7 @@
             <input id="wdAmt" type="number" min="10" placeholder="0.00" inputmode="decimal" />
           </label>
           <span class="conveq">=</span>
-          <label class="convlbl">You get (<span id="wdCoinLbl">BTC</span>)
+          <label class="convlbl">You get <span id="wdCoinLbl">BTC</span>
             <input id="wdCryptoAmt" type="number" placeholder="0.00000000" inputmode="decimal" />
           </label>
         </div>
