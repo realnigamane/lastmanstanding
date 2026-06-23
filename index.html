@@ -111,6 +111,16 @@
   .wagers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .wager { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 14px; padding: 10px 6px; }
   .wager span { font-size: 11px; font-weight: 600; opacity: .8; }
+
+  /* Deposit / Withdraw converter */
+  .coinpick { display: flex; gap: 8px; margin-bottom: 12px; }
+  .coinbtn { flex: 1; background: #1d264a; color: #9fb0e8; border: 1px solid #2a3358; border-radius: 10px; padding: 11px; font-size: 14px; font-weight: 600; }
+  .coinbtn.sel { background: linear-gradient(90deg, #4be3ff, #7d5fff); color: #06122b; }
+  .convgrid { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 10px; }
+  .convlbl { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #8b95c9; font-weight: 600; }
+  .convlbl input { margin-bottom: 0; }
+  .conveq { align-self: center; padding-bottom: 12px; color: #5a6cff; font-weight: 800; font-size: 18px; }
+  .convrate { font-size: 12px; color: #9fffce; margin: 9px 0 12px; min-height: 15px; }
   /* Let the dashboard scroll when it's taller than the screen (esp. mobile) */
   #home { justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding-top: 22px; padding-bottom: 44px; }
 </style>
@@ -184,26 +194,47 @@
         <div id="hmResult" class="muted" style="margin-top:10px;min-height:18px"></div>
       </div>
 
-      <div class="row2">
-        <div class="card">
-          <h2>Deposit</h2>
-          <p class="sub" style="margin:0 0 10px">Add credits with crypto.</p>
-          <input id="depAmt" type="number" min="1" placeholder="Amount (USD)" />
-          <button id="btnDeposit" class="wide">Deposit</button>
-          <div id="depMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+      <div class="card">
+        <h2>💰 Deposit</h2>
+        <p class="sub" style="margin:0 0 12px">Add credits with crypto — 1 credit = $1. Enter either box; the other updates live.</p>
+        <div class="coinpick" id="depCoinPick">
+          <button type="button" class="coinbtn sel" data-coin="BTC">Bitcoin</button>
+          <button type="button" class="coinbtn" data-coin="LTC">Litecoin</button>
         </div>
-        <div class="card">
-          <h2>Withdraw</h2>
-          <p class="sub" style="margin:0 0 10px">Cash out to your own wallet — paid automatically. Min 10 credits.</p>
-          <select id="wdCoin" style="width:100%;padding:12px 14px;font-size:16px;border-radius:10px;border:1px solid #34406e;background:#0e1326;color:#fff;margin-bottom:8px">
-            <option value="BTC">Bitcoin (BTC)</option>
-            <option value="LTC">Litecoin (LTC)</option>
-          </select>
-          <input id="wdAddr" placeholder="Your BTC / LTC address" />
-          <input id="wdAmt" type="number" min="10" placeholder="Amount (credits)" />
-          <button id="btnWithdraw" class="wide">Withdraw</button>
-          <div id="wdMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+        <div class="convgrid">
+          <label class="convlbl">USD
+            <input id="depAmt" type="number" min="1" placeholder="0.00" inputmode="decimal" />
+          </label>
+          <span class="conveq">=</span>
+          <label class="convlbl"><span id="depCoinLbl">BTC</span>
+            <input id="depCrypto" type="number" placeholder="0.00000000" inputmode="decimal" />
+          </label>
         </div>
+        <div class="convrate" id="depRate">Live price loading…</div>
+        <button id="btnDeposit" class="wide">Deposit</button>
+        <div id="depMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+      </div>
+
+      <div class="card">
+        <h2>🏦 Withdraw</h2>
+        <p class="sub" style="margin:0 0 12px">Cash out to your own wallet — paid automatically. Min 10 credits.</p>
+        <div class="coinpick" id="wdCoinPick">
+          <button type="button" class="coinbtn sel" data-coin="BTC">Bitcoin</button>
+          <button type="button" class="coinbtn" data-coin="LTC">Litecoin</button>
+        </div>
+        <div class="convgrid">
+          <label class="convlbl">USD
+            <input id="wdAmt" type="number" min="10" placeholder="0.00" inputmode="decimal" />
+          </label>
+          <span class="conveq">=</span>
+          <label class="convlbl">You get (<span id="wdCoinLbl">BTC</span>)
+            <input id="wdCryptoAmt" type="number" placeholder="0.00000000" inputmode="decimal" />
+          </label>
+        </div>
+        <div class="convrate" id="wdRate">Live price loading…</div>
+        <input id="wdAddr" placeholder="Your BTC address" />
+        <button id="btnWithdraw" class="wide">Withdraw</button>
+        <div id="wdMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
       </div>
     </div>
   </div>

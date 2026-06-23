@@ -138,7 +138,7 @@
   };
   $('btnWithdraw').onclick = async () => {
     const amt = parseInt($('wdAmt').value, 10);
-    const coin = $('wdCoin').value;
+    const coin = wdCoin;
     const address = $('wdAddr').value.trim();
     if (!amt || amt < 10) { $('wdMsg').textContent = 'Minimum withdrawal is 10 credits.'; return; }
     if (!address) { $('wdMsg').textContent = 'Enter your ' + coin + ' address.'; return; }
@@ -149,9 +149,41 @@
       if (d.error) { $('wdMsg').textContent = d.error; return; }
       if (d.credits != null) { myCredits = d.credits; $('hmCredits').textContent = d.credits; }
       $('wdMsg').textContent = d.message || '✓ Withdrawal sent — it pays out automatically.';
-      $('wdAmt').value = '';
+      $('wdAmt').value = ''; $('wdCryptoAmt').value = '';
     } catch (e) { $('wdMsg').textContent = 'Could not submit withdrawal. Try again.'; }
   };
+
+  // ---------- Live USD <-> crypto converters (deposit + withdraw) ----------
+  let RATES = { btc: 0, ltc: 0 };
+  let depCoin = 'BTC', wdCoin = 'BTC';
+  const rateOf = (coin) => (coin === 'LTC' ? RATES.ltc : RATES.btc);
+  const trimCrypto = (n) => { if (!isFinite(n) || n <= 0) return ''; return n.toFixed(8).replace(/\.?0+$/, ''); };
+  const priceLine = (coin) => { const r = rateOf(coin); return r ? ('Live price: 1 ' + coin + ' ≈ $' + r.toLocaleString(undefined, { maximumFractionDigits: 2 })) : 'Live price loading…'; };
+
+  function refreshDep() { $('depCoinLbl').textContent = depCoin; $('depRate').textContent = priceLine(depCoin); }
+  function depFromUsd() { const usd = parseFloat($('depAmt').value) || 0; const r = rateOf(depCoin); $('depCrypto').value = (usd > 0 && r) ? trimCrypto(usd / r) : ''; refreshDep(); }
+  function depFromCrypto() { const c = parseFloat($('depCrypto').value) || 0; const r = rateOf(depCoin); $('depAmt').value = (c > 0 && r) ? (c * r).toFixed(2) : ''; refreshDep(); }
+
+  function refreshWd() { $('wdCoinLbl').textContent = wdCoin; $('wdAddr').placeholder = 'Your ' + wdCoin + ' address'; $('wdRate').textContent = priceLine(wdCoin); }
+  function wdFromUsd() { const usd = parseFloat($('wdAmt').value) || 0; const r = rateOf(wdCoin); $('wdCryptoAmt').value = (usd > 0 && r) ? trimCrypto(usd / r) : ''; refreshWd(); }
+  function wdFromCrypto() { const c = parseFloat($('wdCryptoAmt').value) || 0; const r = rateOf(wdCoin); $('wdAmt').value = (c > 0 && r) ? (c * r).toFixed(2) : ''; refreshWd(); }
+
+  $('depAmt').addEventListener('input', depFromUsd);
+  $('depCrypto').addEventListener('input', depFromCrypto);
+  $('wdAmt').addEventListener('input', wdFromUsd);
+  $('wdCryptoAmt').addEventListener('input', wdFromCrypto);
+
+  document.querySelectorAll('#depCoinPick .coinbtn').forEach((b) => { b.onclick = () => { depCoin = b.getAttribute('data-coin'); document.querySelectorAll('#depCoinPick .coinbtn').forEach((x) => x.classList.toggle('sel', x === b)); depFromUsd(); }; });
+  document.querySelectorAll('#wdCoinPick .coinbtn').forEach((b) => { b.onclick = () => { wdCoin = b.getAttribute('data-coin'); document.querySelectorAll('#wdCoinPick .coinbtn').forEach((x) => x.classList.toggle('sel', x === b)); wdFromUsd(); }; });
+
+  async function loadRates() {
+    try { const d = await (await fetch('/api/rates', { cache: 'no-store' })).json(); if (d && d.btc) RATES = { btc: d.btc, ltc: d.ltc }; } catch (e) {}
+    refreshDep(); refreshWd();
+    if ($('depAmt').value) depFromUsd();
+    if ($('wdAmt').value) wdFromUsd();
+  }
+  loadRates();
+  setInterval(loadRates, 60000);
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
   document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });
 

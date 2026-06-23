@@ -345,6 +345,24 @@ async function handleBtcpayWebhook(req, rawBody) {
   return 200;
 }
 
+// =================== Live crypto prices (deposit/withdraw converters) ===================
+// Cached ~60s so we never hammer the price source. USD per 1 BTC / 1 LTC.
+let ratesCache = { at: 0, btc: 0, ltc: 0 };
+async function fetchRates() {
+  const now = Date.now();
+  if (now - ratesCache.at < 60000 && ratesCache.btc && ratesCache.ltc) return ratesCache;
+  try {
+    const [b, l] = await Promise.all([
+      fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot').then(r => r.json()),
+      fetch('https://api.coinbase.com/v2/prices/LTC-USD/spot').then(r => r.json()),
+    ]);
+    const btc = Number(b && b.data && b.data.amount) || 0;
+    const ltc = Number(l && l.data && l.data.amount) || 0;
+    if (btc && ltc) ratesCache = { at: now, btc, ltc };
+  } catch (e) { console.error('rates fetch failed:', e.message); }
+  return ratesCache;
+}
+
 // =================== HTTP (static + auth/admin API) ===================
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
@@ -400,6 +418,14 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: 'Server/database error. Check the server console.' }));
       }
     });
+    return;
+  }
+  // Live crypto prices for the deposit/withdraw converters.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/rates') {
+    fetchRates().then((r) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ btc: r.btc, ltc: r.ltc, at: r.at }));
+    }).catch(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ btc: 0, ltc: 0 })); });
     return;
   }
   // Static files: serve ONLY these from the project root. An explicit allowlist
