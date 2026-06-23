@@ -77,7 +77,7 @@
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
-      snap = null; snapBuf = [];
+      snap = null; snapBuf = []; document.body.classList.remove('spectating'); lastSpec = false;
       $('hmResult').textContent = result;
       showScreen('home');
     } else if (m.t === 'credits') {
@@ -192,6 +192,11 @@
 
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
+  $('btnLeaveMatch').onclick = () => {
+    sendWS({ t: 'leaveMatch' });           // forfeits the stake (server only refunds during matchmaking)
+    document.body.classList.remove('spectating'); lastSpec = false;
+    showScreen('home');
+  };
   function renderSearching(m) {
     const tail = m.wager > 0 ? (' · 💰 pot ' + m.pot) : '';
     $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;
@@ -262,9 +267,23 @@
   // Buffer each incoming snapshot, indexed by entity id, tagged with the SERVER timestamp.
   // Interpolating by server time (not packet-arrival time) keeps motion perfectly uniform
   // even when packets arrive in uneven bursts.
-  let lastSt = 0, lastArr = 0;
+  let lastSt = 0, lastArr = 0, lastSpec = false;
+  // Show the "you're out — leave to menu" bar to eliminated players while the match runs on.
+  function updateSpectateBar(m) {
+    const me = m.players && m.players.find(p => p.id === myUsername);
+    const out = !!(me && !me.alive && m.phase === 'playing');
+    if (out === lastSpec) return;
+    lastSpec = out;
+    document.body.classList.toggle('spectating', out);
+    if (out) {
+      $('specMsg').textContent = (m.wager > 0)
+        ? '💀 You’re out. Your ' + m.wager + ' credits are forfeited — leaving won’t refund them.'
+        : '💀 You’re out. Leave anytime, or watch how it ends.';
+    }
+  }
   function ingestSnapshot(m) {
     snap = m;
+    updateSpectateBar(m);
     const players = new Map(); for (const p of m.players) players.set(p.id, p);
     const platforms = new Map(); for (const p of m.platforms) platforms.set(p.id, p);
     const hazards = new Map(); for (const b of m.hazards) hazards.set(b.id, b);

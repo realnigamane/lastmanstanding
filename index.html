@@ -93,6 +93,16 @@
     font-size: 12px; z-index: 8; pointer-events: none; border: 1px solid #34406e; }
   @media (orientation: portrait) { body.touch.playing #rotatehint { display: block; } }
 
+  /* Eliminated-player "leave to menu" bar */
+  #specBar { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9;
+    align-items: center; gap: 12px; max-width: 94vw;
+    background: rgba(24,16,26,.95); border: 1px solid #6b2a3e; border-radius: 11px; padding: 9px 9px 9px 14px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.55); }
+  body.spectating #specBar { display: flex; }
+  body.spectating #rotatehint { display: none; }
+  #specBar .sx { color: #ffb3b3; font-size: 12.5px; line-height: 1.35; }
+  #specBar button { padding: 8px 13px; font-size: 12.5px; white-space: nowrap; }
+
   /* Dashboard */
   .dash { width: min(560px, 96vw); display: flex; flex-direction: column; gap: 14px; }
   .dash .card { text-align: left; }
@@ -268,6 +278,13 @@
   </div>
 
   <div id="rotatehint">↻ Rotate your phone sideways for a bigger view</div>
+
+  <!-- Shown to eliminated players while the match is still running -->
+  <div id="specBar">
+    <span class="sx" id="specMsg"></span>
+    <button id="btnLeaveMatch" class="ghost">Leave to menu</button>
+  </div>
+
   <div id="touch">
     <div class="pad left">
       <button id="btnLeft" class="tbtn">◀</button>
