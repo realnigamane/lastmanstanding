@@ -12,7 +12,7 @@
   // two real server snapshots by time. This gives constant-velocity, jitter-free motion
   // (no snapshot-boundary stutter) and absorbs network jitter & dropped frames.
   let snapBuf = [];                // [{ st, players:Map, platforms:Map, hazards:Map, raw }]
-  const INTERP_DELAY = 90;         // ms to render behind newest data (jitter cushion)
+  const INTERP_DELAY = 50;         // ms to render behind newest data — low for snappy input, the monotonic clock keeps it smooth
   // Smooth, monotonic playback clock (in server-time ms). Advanced by real frame time and only
   // gently corrected toward the newest snapshot — never hard-reset on packet arrival, so it
   // can't jump backward and cause skips when packets arrive with jitter.
