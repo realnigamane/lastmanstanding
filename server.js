@@ -445,7 +445,7 @@ const server = http.createServer((req, res) => {
 // =================== Game constants ===================
 const WORLD = { w: 960, h: 600 };
 const TICK_MS = 1000 / 60;           // 60 ticks/sec; physics is tuned per-tick
-const BROADCAST_EVERY = 2;           // send a snapshot every 2 ticks (~30/sec)
+const BROADCAST_EVERY = 1;           // send a snapshot every tick (60/sec) — client interpolates
 
 const PW = 28, PH = 28;
 const GRAVITY = 0.72, MOVE_ACCEL = 0.95, MOVE_MAX = 5.6, FRICTION = 0.80;
@@ -684,8 +684,10 @@ function stepPhysics(room) {
 }
 
 // =================== Hazards (bouncing balls) ===================
+let hazSeq = 0;
 function spawnHazard(room) {
   room.hazards.push({
+    id: hazSeq++,
     x: HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R),
     y: -HAZARD_R - 10,
     vx: (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1),
@@ -896,7 +898,7 @@ function roomSnapshot(room) {
     wager: room.wager, pot: room.pot,
     scroll: Math.round(room.scrollSpeed),
     platforms: room.platforms.map(p => ({ id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
-    hazards: room.hazards.map(b => ({ x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
+    hazards: room.hazards.map(b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
     players: [...room.members.values()].map(s => ({
       id: s.username, name: s.username, color: s.player.color,
       x: Math.round(s.player.x), y: Math.round(s.player.y),

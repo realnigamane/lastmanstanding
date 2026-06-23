@@ -8,9 +8,11 @@
   let myUsername = null, myCredits = 0;
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
-  const render = new Map();        // id -> {x,y} interpolated player positions
-  const platRender = new Map();    // id -> {x,y} interpolated platform positions
-  const haz = [];                  // interpolated hazard positions
+  // Time-buffered snapshot interpolation: we render slightly in the past and lerp between
+  // two real server snapshots by time. This gives constant-velocity, jitter-free motion
+  // (no snapshot-boundary stutter) and absorbs network jitter & dropped frames.
+  let snapBuf = [];                // [{ t, players:Map, platforms:Map, hazards:Map, raw }]
+  const INTERP_DELAY = 55;         // ms to render behind newest data
   let shake = 0;                   // screen-shake amount (decays)
   const stars = [];                // decorative parallax starfield
 
@@ -65,8 +67,8 @@
       renderSearching(m);
       if (curScreen !== 'searching') showScreen('searching');
     } else if (m.t === 'snapshot') {
-      snap = m;
-      if (curScreen !== 'game') { render.clear(); platRender.clear(); haz.length = 0; showScreen('game'); }
+      if (curScreen !== 'game') { snapBuf = []; showScreen('game'); }
+      ingestSnapshot(m);
     } else if (m.t === 'home') {
       let result = snap && snap.winner
         ? (snap.winner === myUsername ? '🏆 You won!' : 'Winner: ' + snap.winner)
@@ -75,7 +77,7 @@
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
-      snap = null; render.clear(); platRender.clear(); haz.length = 0;
+      snap = null; snapBuf = [];
       $('hmResult').textContent = result;
       showScreen('home');
     } else if (m.t === 'credits') {
@@ -257,6 +259,34 @@
   // ---------- Rendering ----------
   const lerp = (a, b, t) => a + (b - a) * t;
 
+  // Buffer each incoming snapshot (indexed by entity id) with its arrival time.
+  function ingestSnapshot(m) {
+    snap = m;
+    const players = new Map(); for (const p of m.players) players.set(p.id, p);
+    const platforms = new Map(); for (const p of m.platforms) platforms.set(p.id, p);
+    const hazards = new Map(); for (const b of m.hazards) hazards.set(b.id, b);
+    snapBuf.push({ t: performance.now(), players, platforms, hazards, raw: m });
+    if (snapBuf.length > 40) snapBuf.shift();
+  }
+
+  // Pre-rendered, cached drawing assets (building these every frame is what caused the jank).
+  const floorGrad = (() => {
+    const g = ctx.createLinearGradient(0, H - 80, 0, H);
+    g.addColorStop(0, 'rgba(255,60,80,0)'); g.addColorStop(1, 'rgba(255,40,70,0.42)');
+    return g;
+  })();
+  const HZR = 15, HZGLOW = HZR * 2.3, hazSpriteR = Math.ceil(HZGLOW) + 2;
+  const hazSprite = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = hazSpriteR * 2;
+    const h = c.getContext('2d'); const cx = hazSpriteR, cy = hazSpriteR;
+    const g = h.createRadialGradient(cx, cy, 2, cx, cy, HZGLOW);
+    g.addColorStop(0, 'rgba(255,214,128,0.9)'); g.addColorStop(0.5, 'rgba(255,120,60,0.45)'); g.addColorStop(1, 'rgba(255,80,40,0)');
+    h.fillStyle = g; h.beginPath(); h.arc(cx, cy, HZGLOW, 0, Math.PI * 2); h.fill();
+    h.fillStyle = '#ff9f2e'; h.beginPath(); h.arc(cx, cy, HZR, 0, Math.PI * 2); h.fill();
+    h.fillStyle = 'rgba(255,255,255,0.75)'; h.beginPath(); h.arc(cx - HZR * 0.3, cy - HZR * 0.3, HZR * 0.35, 0, Math.PI * 2); h.fill();
+    return c;
+  })();
+
   function initStars() {
     for (let i = 0; i < 80; i++) stars.push({ x: Math.random() * W, y: Math.random() * H, z: 0.4 + Math.random() * 1.0 });
   }
@@ -274,7 +304,18 @@
 
   function draw() {
     requestAnimationFrame(draw);
-    if (curScreen !== 'game' || !snap || !snap.platforms) return;
+    if (curScreen !== 'game' || snapBuf.length === 0) return;
+
+    // Pick the two snapshots that bracket our (slightly delayed) render time, and the blend.
+    const renderT = performance.now() - INTERP_DELAY;
+    let i = snapBuf.length - 1;
+    while (i > 0 && snapBuf[i].t > renderT) i--;
+    const s0 = snapBuf[i];
+    const s1 = snapBuf[Math.min(snapBuf.length - 1, i + 1)];
+    const span = s1.t - s0.t;
+    const a = span > 0 ? Math.min(1, Math.max(0, (renderT - s0.t) / span)) : 0;
+    const ix = (p0, p1) => p0 ? p0.x + ((p1 ? p1.x : p0.x) - p0.x) * a : (p1 ? p1.x : 0);
+    const iy = (p0, p1) => p0 ? p0.y + ((p1 ? p1.y : p0.y) - p0.y) * a : (p1 ? p1.y : 0);
 
     ctx.save();
     if (shake > 0) {
@@ -285,64 +326,35 @@
     ctx.clearRect(-30, -30, W + 60, H + 60);
     drawStars();
 
-    // rising danger floor
-    const dg = ctx.createLinearGradient(0, H - 80, 0, H);
-    dg.addColorStop(0, 'rgba(255,60,80,0)');
-    dg.addColorStop(1, 'rgba(255,40,70,0.42)');
-    ctx.fillStyle = dg; ctx.fillRect(0, H - 80, W, 80);
+    // rising danger floor (cached gradient)
+    ctx.fillStyle = floorGrad; ctx.fillRect(0, H - 80, W, 80);
 
-    // platforms (interpolated like players so the scrolling field stays smooth)
-    for (const p of snap.platforms) {
-      let rp = platRender.get(p.id);
-      if (!rp) { rp = { x: p.x, y: p.y }; platRender.set(p.id, rp); }
-      if (Math.abs(p.x - rp.x) > 160 || Math.abs(p.y - rp.y) > 160) { rp.x = p.x; rp.y = p.y; }
-      else { rp.x = lerp(rp.x, p.x, 0.4); rp.y = lerp(rp.y, p.y, 0.4); }
-      if (rp.y < -p.h || rp.y > H) continue;
-      ctx.save();
-      ctx.shadowColor = 'rgba(99,120,255,0.55)'; ctx.shadowBlur = 10;
-      ctx.fillStyle = '#46508c'; roundRect(rp.x, rp.y, p.w, p.h, 6);
-      ctx.restore();
-      ctx.fillStyle = '#6b78cf'; ctx.fillRect(rp.x + 3, rp.y + 2, p.w - 6, 3);
+    // platforms — interpolated between two real snapshots (no per-frame shadowBlur)
+    for (const [id, p] of s1.platforms) {
+      const x = ix(s0.platforms.get(id), p), y = iy(s0.platforms.get(id), p);
+      if (y < -p.h || y > H) continue;
+      ctx.fillStyle = '#46508c'; roundRect(x, y, p.w, p.h, 6);
+      ctx.fillStyle = '#6b78cf'; ctx.fillRect(x + 3, y + 2, p.w - 6, 3);
     }
-    { const live = new Set(snap.platforms.map(p => p.id));
-      for (const id of [...platRender.keys()]) if (!live.has(id)) platRender.delete(id); }
 
-    // players
-    for (const pl of snap.players) {
-      let r = render.get(pl.id);
-      if (!r) { r = { x: pl.x, y: pl.y }; render.set(pl.id, r); }
-      if (Math.abs(pl.x - r.x) > 140 || Math.abs(pl.y - r.y) > 140) { r.x = pl.x; r.y = pl.y; }
-      else { r.x = lerp(r.x, pl.x, 0.4); r.y = lerp(r.y, pl.y, 0.4); }
-      drawPlayer(r.x, r.y, pl);
+    // hazards — interpolated, drawn from the cached glow sprite
+    for (const [id, b] of s1.hazards) {
+      const x = ix(s0.hazards.get(id), b), y = iy(s0.hazards.get(id), b);
+      ctx.drawImage(hazSprite, Math.round(x - hazSpriteR), Math.round(y - hazSpriteR));
     }
-    for (const id of [...render.keys()]) if (!snap.players.find(p => p.id === id)) render.delete(id);
 
-    drawHazards();
+    // players — interpolated
+    for (const [id, pl] of s1.players) {
+      const x = ix(s0.players.get(id), pl), y = iy(s0.players.get(id), pl);
+      drawPlayer(x, y, pl);
+    }
 
     // local-player got knocked -> flash + shake
-    const me = snap.players.find(p => p.id === myUsername);
+    const me = s1.players.get(myUsername);
     if (me && me.hit) { shake = Math.max(shake, 1); ctx.fillStyle = 'rgba(255,40,60,0.20)'; ctx.fillRect(0, 0, W, H); }
 
     drawHUD(); drawPhaseOverlay();
     ctx.restore();
-  }
-
-  function drawHazards() {
-    if (!snap.hazards) return;
-    for (let i = 0; i < snap.hazards.length; i++) {
-      const b = snap.hazards[i];
-      let h = haz[i]; if (!h) { h = { x: b.x, y: b.y }; haz[i] = h; }
-      if (Math.abs(b.x - h.x) > 120 || Math.abs(b.y - h.y) > 120) { h.x = b.x; h.y = b.y; }
-      else { h.x = lerp(h.x, b.x, 0.5); h.y = lerp(h.y, b.y, 0.5); }
-      const g = ctx.createRadialGradient(h.x, h.y, 2, h.x, h.y, b.r * 2.3);
-      g.addColorStop(0, 'rgba(255,214,128,0.9)');
-      g.addColorStop(0.5, 'rgba(255,120,60,0.45)');
-      g.addColorStop(1, 'rgba(255,80,40,0)');
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(h.x, h.y, b.r * 2.3, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ff9f2e'; ctx.beginPath(); ctx.arc(h.x, h.y, b.r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.beginPath(); ctx.arc(h.x - b.r * 0.3, h.y - b.r * 0.3, b.r * 0.35, 0, Math.PI * 2); ctx.fill();
-    }
-    haz.length = snap.hazards.length;
   }
 
   function drawPlayer(x, y, pl) {
