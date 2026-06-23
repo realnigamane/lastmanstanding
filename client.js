@@ -14,7 +14,7 @@
   const stars = [];                // decorative parallax starfield
 
   // ---------- Screens ----------
-  const screens = ['auth', 'home', 'searching', 'game'];
+  const screens = ['auth', 'boot', 'home', 'searching', 'game'];
   function showScreen(name) {
     curScreen = name;
     for (const s of screens) $(s).classList.toggle('active', s === name);
@@ -415,5 +415,14 @@
   draw();
   connect();
   const saved = localStorage.getItem('lms_token');
-  if (saved) authWith(saved);
+  if (saved) {
+    // Show a brief loading splash (not the login screen) while we re-authenticate,
+    // so a page refresh never flashes "logged out".
+    showScreen('boot');
+    authWith(saved);
+    // Safety net: if re-auth doesn't land (bad/expired token, no connection), fall back to login.
+    setTimeout(() => { if (curScreen === 'boot') showScreen('auth'); }, 7000);
+  } else {
+    showScreen('auth');
+  }
 })();
