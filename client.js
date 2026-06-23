@@ -259,14 +259,19 @@
   // ---------- Rendering ----------
   const lerp = (a, b, t) => a + (b - a) * t;
 
-  // Buffer each incoming snapshot (indexed by entity id) with its arrival time.
+  // Buffer each incoming snapshot, indexed by entity id, tagged with the SERVER timestamp.
+  // Interpolating by server time (not packet-arrival time) keeps motion perfectly uniform
+  // even when packets arrive in uneven bursts.
+  let lastSt = 0, lastArr = 0;
   function ingestSnapshot(m) {
     snap = m;
     const players = new Map(); for (const p of m.players) players.set(p.id, p);
     const platforms = new Map(); for (const p of m.platforms) platforms.set(p.id, p);
     const hazards = new Map(); for (const b of m.hazards) hazards.set(b.id, b);
-    snapBuf.push({ t: performance.now(), players, platforms, hazards, raw: m });
-    if (snapBuf.length > 40) snapBuf.shift();
+    const st = m.st || (lastSt + 16);
+    snapBuf.push({ st, players, platforms, hazards, raw: m });
+    if (snapBuf.length > 80) snapBuf.shift();
+    lastSt = st; lastArr = performance.now();
   }
 
   // Pre-rendered, cached drawing assets (building these every frame is what caused the jank).
@@ -306,16 +311,23 @@
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || snapBuf.length === 0) return;
 
-    // Pick the two snapshots that bracket our (slightly delayed) render time, and the blend.
-    const renderT = performance.now() - INTERP_DELAY;
+    // Render slightly behind newest server time; advance smoothly by wall-clock between packets.
+    const renderST = lastSt + (performance.now() - lastArr) - INTERP_DELAY;
     let i = snapBuf.length - 1;
-    while (i > 0 && snapBuf[i].t > renderT) i--;
+    while (i > 0 && snapBuf[i].st > renderST) i--;
     const s0 = snapBuf[i];
     const s1 = snapBuf[Math.min(snapBuf.length - 1, i + 1)];
-    const span = s1.t - s0.t;
-    const a = span > 0 ? Math.min(1, Math.max(0, (renderT - s0.t) / span)) : 0;
-    const ix = (p0, p1) => p0 ? p0.x + ((p1 ? p1.x : p0.x) - p0.x) * a : (p1 ? p1.x : 0);
-    const iy = (p0, p1) => p0 ? p0.y + ((p1 ? p1.y : p0.y) - p0.y) * a : (p1 ? p1.y : 0);
+    const span = s1.st - s0.st;
+    const a = span > 0 ? Math.min(1, Math.max(0, (renderST - s0.st) / span)) : 0;
+    // Interpolate p0->p1 into the shared _t. If the gap is huge (a recycled ball/platform
+    // teleporting), snap to the new position instead of smearing across the screen.
+    const SNAP = 150, _t = { x: 0, y: 0 };
+    const ipos = (p0, p1) => {
+      const A = p0 || p1, B = p1 || p0;
+      if (!A) { _t.x = 0; _t.y = 0; return _t; }
+      if (!p0 || !p1 || Math.abs(B.x - A.x) > SNAP || Math.abs(B.y - A.y) > SNAP) { _t.x = B.x; _t.y = B.y; return _t; }
+      _t.x = A.x + (B.x - A.x) * a; _t.y = A.y + (B.y - A.y) * a; return _t;
+    };
 
     ctx.save();
     if (shake > 0) {
@@ -331,22 +343,23 @@
 
     // platforms — interpolated between two real snapshots (no per-frame shadowBlur)
     for (const [id, p] of s1.platforms) {
-      const x = ix(s0.platforms.get(id), p), y = iy(s0.platforms.get(id), p);
-      if (y < -p.h || y > H) continue;
-      ctx.fillStyle = '#46508c'; roundRect(x, y, p.w, p.h, 6);
-      ctx.fillStyle = '#6b78cf'; ctx.fillRect(x + 3, y + 2, p.w - 6, 3);
+      const t = ipos(s0.platforms.get(id), p);
+      if (t.y < -p.h || t.y > H) continue;
+      ctx.fillStyle = '#46508c'; roundRect(t.x, t.y, p.w, p.h, 6);
+      ctx.fillStyle = '#6b78cf'; ctx.fillRect(t.x + 3, t.y + 2, p.w - 6, 3);
     }
 
     // hazards — interpolated, drawn from the cached glow sprite
     for (const [id, b] of s1.hazards) {
-      const x = ix(s0.hazards.get(id), b), y = iy(s0.hazards.get(id), b);
-      ctx.drawImage(hazSprite, Math.round(x - hazSpriteR), Math.round(y - hazSpriteR));
+      const t = ipos(s0.hazards.get(id), b);
+      if (t.y < -hazSpriteR || t.y > H + hazSpriteR) continue;
+      ctx.drawImage(hazSprite, Math.round(t.x - hazSpriteR), Math.round(t.y - hazSpriteR));
     }
 
     // players — interpolated
     for (const [id, pl] of s1.players) {
-      const x = ix(s0.players.get(id), pl), y = iy(s0.players.get(id), pl);
-      drawPlayer(x, y, pl);
+      const t = ipos(s0.players.get(id), pl);
+      drawPlayer(t.x, t.y, pl);
     }
 
     // local-player got knocked -> flash + shake

@@ -891,7 +891,7 @@ function sendSearch(room) {
 }
 function roomSnapshot(room) {
   const snap = {
-    t: 'snapshot', code: room.code, phase: room.phase,
+    t: 'snapshot', code: room.code, phase: room.phase, st: Date.now(),
     countdown: Math.max(0, Math.ceil(room.phaseTimer)),
     roundTime: Math.floor(room.roundTime), winner: room.winnerName,
     alive: aliveList(room).length, total: room.members.size,
