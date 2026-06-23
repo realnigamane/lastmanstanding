@@ -895,7 +895,7 @@ function roomSnapshot(room) {
     alive: aliveList(room).length, total: room.members.size,
     wager: room.wager, pot: room.pot,
     scroll: Math.round(room.scrollSpeed),
-    platforms: room.platforms.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
+    platforms: room.platforms.map(p => ({ id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
     hazards: room.hazards.map(b => ({ x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
     players: [...room.members.values()].map(s => ({
       id: s.username, name: s.username, color: s.player.color,

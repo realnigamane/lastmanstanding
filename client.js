@@ -9,6 +9,7 @@
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
   const render = new Map();        // id -> {x,y} interpolated player positions
+  const platRender = new Map();    // id -> {x,y} interpolated platform positions
   const haz = [];                  // interpolated hazard positions
   let shake = 0;                   // screen-shake amount (decays)
   const stars = [];                // decorative parallax starfield
@@ -65,7 +66,7 @@
       if (curScreen !== 'searching') showScreen('searching');
     } else if (m.t === 'snapshot') {
       snap = m;
-      if (curScreen !== 'game') { render.clear(); haz.length = 0; showScreen('game'); }
+      if (curScreen !== 'game') { render.clear(); platRender.clear(); haz.length = 0; showScreen('game'); }
     } else if (m.t === 'home') {
       let result = snap && snap.winner
         ? (snap.winner === myUsername ? '🏆 You won!' : 'Winner: ' + snap.winner)
@@ -74,7 +75,7 @@
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
-      snap = null; render.clear(); haz.length = 0;
+      snap = null; render.clear(); platRender.clear(); haz.length = 0;
       $('hmResult').textContent = result;
       showScreen('home');
     } else if (m.t === 'credits') {
@@ -290,15 +291,21 @@
     dg.addColorStop(1, 'rgba(255,40,70,0.42)');
     ctx.fillStyle = dg; ctx.fillRect(0, H - 80, W, 80);
 
-    // platforms (with glow)
+    // platforms (interpolated like players so the scrolling field stays smooth)
     for (const p of snap.platforms) {
-      if (p.y < -p.h || p.y > H) continue;
+      let rp = platRender.get(p.id);
+      if (!rp) { rp = { x: p.x, y: p.y }; platRender.set(p.id, rp); }
+      if (Math.abs(p.x - rp.x) > 160 || Math.abs(p.y - rp.y) > 160) { rp.x = p.x; rp.y = p.y; }
+      else { rp.x = lerp(rp.x, p.x, 0.4); rp.y = lerp(rp.y, p.y, 0.4); }
+      if (rp.y < -p.h || rp.y > H) continue;
       ctx.save();
       ctx.shadowColor = 'rgba(99,120,255,0.55)'; ctx.shadowBlur = 10;
-      ctx.fillStyle = '#46508c'; roundRect(p.x, p.y, p.w, p.h, 6);
+      ctx.fillStyle = '#46508c'; roundRect(rp.x, rp.y, p.w, p.h, 6);
       ctx.restore();
-      ctx.fillStyle = '#6b78cf'; ctx.fillRect(p.x + 3, p.y + 2, p.w - 6, 3);
+      ctx.fillStyle = '#6b78cf'; ctx.fillRect(rp.x + 3, rp.y + 2, p.w - 6, 3);
     }
+    { const live = new Set(snap.platforms.map(p => p.id));
+      for (const id of [...platRender.keys()]) if (!live.has(id)) platRender.delete(id); }
 
     // players
     for (const pl of snap.players) {
