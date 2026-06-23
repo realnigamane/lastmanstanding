@@ -11,8 +11,12 @@
   // Time-buffered snapshot interpolation: we render slightly in the past and lerp between
   // two real server snapshots by time. This gives constant-velocity, jitter-free motion
   // (no snapshot-boundary stutter) and absorbs network jitter & dropped frames.
-  let snapBuf = [];                // [{ t, players:Map, platforms:Map, hazards:Map, raw }]
-  const INTERP_DELAY = 55;         // ms to render behind newest data
+  let snapBuf = [];                // [{ st, players:Map, platforms:Map, hazards:Map, raw }]
+  const INTERP_DELAY = 90;         // ms to render behind newest data (jitter cushion)
+  // Smooth, monotonic playback clock (in server-time ms). Advanced by real frame time and only
+  // gently corrected toward the newest snapshot — never hard-reset on packet arrival, so it
+  // can't jump backward and cause skips when packets arrive with jitter.
+  let playClock = 0, clockReady = false, lastFrameT = 0;
   let shake = 0;                   // screen-shake amount (decays)
   const stars = [];                // decorative parallax starfield
 
@@ -67,7 +71,7 @@
       renderSearching(m);
       if (curScreen !== 'searching') showScreen('searching');
     } else if (m.t === 'snapshot') {
-      if (curScreen !== 'game') { snapBuf = []; showScreen('game'); }
+      if (curScreen !== 'game') { snapBuf = []; clockReady = false; lastFrameT = 0; showScreen('game'); }
       ingestSnapshot(m);
     } else if (m.t === 'home') {
       let result = snap && snap.winner
@@ -77,7 +81,7 @@
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
-      snap = null; snapBuf = []; document.body.classList.remove('spectating'); lastSpec = false;
+      snap = null; snapBuf = []; clockReady = false; lastFrameT = 0; document.body.classList.remove('spectating'); lastSpec = false;
       $('hmResult').textContent = result;
       showScreen('home');
     } else if (m.t === 'credits') {
@@ -267,7 +271,7 @@
   // Buffer each incoming snapshot, indexed by entity id, tagged with the SERVER timestamp.
   // Interpolating by server time (not packet-arrival time) keeps motion perfectly uniform
   // even when packets arrive in uneven bursts.
-  let lastSt = 0, lastArr = 0, lastSpec = false;
+  let lastSt = 0, lastSpec = false;
   // Show the "you're out — leave to menu" bar to eliminated players while the match runs on.
   function updateSpectateBar(m) {
     const me = m.players && m.players.find(p => p.id === myUsername);
@@ -289,8 +293,8 @@
     const hazards = new Map(); for (const b of m.hazards) hazards.set(b.id, b);
     const st = m.st || (lastSt + 16);
     snapBuf.push({ st, players, platforms, hazards, raw: m });
-    if (snapBuf.length > 80) snapBuf.shift();
-    lastSt = st; lastArr = performance.now();
+    if (snapBuf.length > 120) snapBuf.shift();
+    lastSt = st;
   }
 
   // Pre-rendered, cached drawing assets (building these every frame is what caused the jank).
@@ -330,8 +334,19 @@
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || snapBuf.length === 0) return;
 
-    // Render slightly behind newest server time; advance smoothly by wall-clock between packets.
-    const renderST = lastSt + (performance.now() - lastArr) - INTERP_DELAY;
+    // Advance a smooth, monotonic playback clock by real frame time; only nudge it toward the
+    // newest server time so it never jumps backward (which is what caused the little skips).
+    const nowMs = performance.now();
+    let frameMs = lastFrameT ? (nowMs - lastFrameT) : 16;
+    lastFrameT = nowMs;
+    if (frameMs > 250) frameMs = 16;                 // tab was backgrounded — don't lurch forward
+    if (!clockReady) { playClock = lastSt; clockReady = true; }
+    playClock += frameMs;
+    const lead = playClock - lastSt;                 // how far ahead of the newest snapshot we are
+    if (lead > 70) playClock -= (lead - 70) * 0.1;   // running ahead of data — ease back gently
+    else if (lead < -350) playClock = lastSt - 120;  // fell far behind (stall) — resync
+    else playClock += (lastSt - playClock) * 0.008;  // tiny drift correction toward server rate
+    const renderST = playClock - INTERP_DELAY;
     let i = snapBuf.length - 1;
     while (i > 0 && snapBuf[i].st > renderST) i--;
     const s0 = snapBuf[i];
