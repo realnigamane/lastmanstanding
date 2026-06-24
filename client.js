@@ -342,10 +342,11 @@
     if (frameMs > 250) frameMs = 16;                 // tab was backgrounded — don't lurch forward
     if (!clockReady) { playClock = lastSt; clockReady = true; }
     playClock += frameMs;
+    const k = frameMs / 16.67;                       // normalize smoothing so it's frame-rate independent
     const lead = playClock - lastSt;                 // how far ahead of the newest snapshot we are
-    if (lead > 70) playClock -= (lead - 70) * 0.1;   // running ahead of data — ease back gently
-    else if (lead < -350) playClock = lastSt - 120;  // fell far behind (stall) — resync
-    else playClock += (lastSt - playClock) * 0.008;  // tiny drift correction toward server rate
+    if (lead > 70) playClock -= (lead - 70) * Math.min(1, 0.1 * k);   // running ahead — ease back gently
+    else if (lead < -350) playClock = lastSt - 120;                   // fell far behind (stall) — resync
+    else playClock += (lastSt - playClock) * Math.min(1, 0.008 * k);  // tiny drift correction toward server rate
     const renderST = playClock - INTERP_DELAY;
     let i = snapBuf.length - 1;
     while (i > 0 && snapBuf[i].st > renderST) i--;

@@ -830,7 +830,7 @@ function updateRoom(room, dt) {
     let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
     // Speed climbs a bit more from 80s, then LOCKS at the 90s pace and holds forever —
     // from there it's pure survival, not an ever-faster wall.
-    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 8;
+    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 10;
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
