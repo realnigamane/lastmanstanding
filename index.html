@@ -131,6 +131,20 @@
   .convlbl input { margin-bottom: 0; }
   .conveq { align-self: center; padding-bottom: 12px; color: #5a6cff; font-weight: 800; font-size: 18px; }
   .convrate { font-size: 12px; color: #9fffce; margin: 9px 0 12px; min-height: 15px; }
+
+  /* Transaction history */
+  .histtabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .histtabs button { flex: 1; background: #1d264a; color: #9fb0e8; border: 1px solid #2a3358; border-radius: 9px; padding: 9px; font-size: 13.5px; font-weight: 600; }
+  .histtabs button.sel { background: linear-gradient(90deg, #4be3ff, #7d5fff); color: #06122b; }
+  .histlist { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+  .histrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #0e1326; border: 1px solid #222b4d; border-radius: 9px; padding: 9px 11px; }
+  .histrow .ha { font-weight: 700; font-size: 14px; }
+  .histrow .hd { font-size: 11px; color: #8b95c9; margin-top: 1px; }
+  .hb { font-size: 11.5px; font-weight: 700; padding: 4px 9px; border-radius: 20px; white-space: nowrap; }
+  .hb.done { background: rgba(50,255,126,.15); color: #7dffb0; }
+  .hb.conf { background: rgba(75,227,255,.15); color: #7fe3ff; }
+  .hb.pend { background: rgba(255,212,121,.15); color: #ffd479; }
+  .hb.gray { background: rgba(139,149,201,.15); color: #aab4e0; }
   /* Let the dashboard scroll when it's taller than the screen (esp. mobile) */
   #home { justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; padding-top: 22px; padding-bottom: 44px; }
 </style>
@@ -214,7 +228,7 @@
 
       <div class="card">
         <h2>💰 Deposit</h2>
-        <p class="sub" style="margin:0 0 12px">Add credits with crypto — 1 credit = $1. Enter either box; the other updates live.</p>
+        <p class="sub" style="margin:0 0 12px">Add credits with crypto — 1 credit = $1 (a 1.5% deposit fee applies). Enter either box; the other updates live.</p>
         <div class="coinpick" id="depCoinPick">
           <button type="button" class="coinbtn sel" data-coin="BTC">Bitcoin</button>
           <button type="button" class="coinbtn" data-coin="LTC">Litecoin</button>
@@ -253,6 +267,18 @@
         <input id="wdAddr" placeholder="Your BTC address" />
         <button id="btnWithdraw" class="wide">Withdraw</button>
         <div id="wdMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+      </div>
+
+      <div class="card">
+        <h2>📜 Transaction history</h2>
+        <p class="sub" style="margin:0 0 12px">Track deposits and cash-outs — they update live as they confirm on-chain.</p>
+        <div class="histtabs">
+          <button id="htDep" class="sel">Deposits</button>
+          <button id="htWd">Withdrawals</button>
+        </div>
+        <div id="histDep" class="histlist"></div>
+        <div id="histWd" class="histlist" style="display:none"></div>
+        <div id="histMsg" class="muted" style="margin-top:8px;min-height:14px"></div>
       </div>
     </div>
   </div>

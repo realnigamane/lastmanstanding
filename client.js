@@ -63,6 +63,7 @@
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       $('hmWins').textContent = m.wins != null ? m.wins : 0;
       showScreen('home');
+      loadHistory();
     } else if (m.t === 'authfail') {
       localStorage.removeItem('lms_token');
       showScreen('auth');
@@ -84,6 +85,7 @@
       snap = null; snapBuf = []; clockReady = false; lastFrameT = 0; document.body.classList.remove('spectating'); lastSpec = false;
       $('hmResult').textContent = result;
       showScreen('home');
+      loadHistory();
     } else if (m.t === 'credits') {
       myCredits = m.credits; $('hmCredits').textContent = m.credits;
     } else if (m.t === 'matchError') {
@@ -141,6 +143,7 @@
       if (d.error) { $('depMsg').textContent = d.error; return; }
       $('depMsg').textContent = 'Opening payment window — your balance updates once the payment confirms on-chain.';
       window.open(d.checkoutLink, '_blank');
+      setTimeout(loadHistory, 2500);
     } catch (e) { $('depMsg').textContent = 'Could not start deposit. Try again.'; }
   };
   $('btnWithdraw').onclick = async () => {
@@ -157,6 +160,7 @@
       if (d.credits != null) { myCredits = d.credits; $('hmCredits').textContent = d.credits; }
       $('wdMsg').textContent = d.message || '✓ Withdrawal sent — it pays out automatically.';
       $('wdAmt').value = ''; $('wdCryptoAmt').value = '';
+      setTimeout(loadHistory, 1500);
     } catch (e) { $('wdMsg').textContent = 'Could not submit withdrawal. Try again.'; }
   };
 
@@ -191,6 +195,51 @@
   }
   loadRates();
   setInterval(loadRates, 30000);
+
+  // ---------- Transaction history (deposits + withdrawals, live status) ----------
+  let histTimer = null;
+  const PENDINGY = new Set(['pending', 'confirming', 'sending', 'review']);
+  function histBadge(it) {
+    const t = it.target || 2;
+    switch (it.status) {
+      case 'completed': return '<span class="hb done">Completed ✓</span>';
+      case 'confirming': return '<span class="hb conf">Confirming ' + (it.confs != null ? it.confs : '…') + '/' + t + '</span>';
+      case 'sending': return '<span class="hb conf">Sending…</span>';
+      case 'pending': return '<span class="hb pend">Pending</span>';
+      case 'review': return '<span class="hb pend">In review</span>';
+      case 'expired': return '<span class="hb gray">Expired</span>';
+      case 'cancelled': return '<span class="hb gray">Cancelled</span>';
+      case 'refunded': return '<span class="hb gray">Refunded</span>';
+      default: return '<span class="hb gray">' + (it.status || '') + '</span>';
+    }
+  }
+  function renderHist(el, items, kind) {
+    if (!items || !items.length) { el.innerHTML = '<div class="muted" style="padding:8px 2px">No ' + kind + ' yet.</div>'; return; }
+    const sign = kind === 'deposits' ? '+' : '−';
+    el.innerHTML = items.map((it) => {
+      let when = '';
+      if (it.date) { const d = new Date(it.date); if (!isNaN(d)) when = d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+      return '<div class="histrow"><div><div class="ha">' + sign + it.amount + ' cr</div><div class="hd">' + when + '</div></div>' + histBadge(it) + '</div>';
+    }).join('');
+  }
+  async function loadHistory() {
+    if (!authToken || curScreen !== 'home') return;
+    try {
+      const r = await fetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken }) });
+      const d = await r.json();
+      if (d && d.ok) {
+        renderHist($('histDep'), d.deposits, 'deposits');
+        renderHist($('histWd'), d.withdrawals, 'withdrawals');
+        $('histMsg').textContent = '';
+        const anyPending = [...(d.deposits || []), ...(d.withdrawals || [])].some((x) => PENDINGY.has(x.status));
+        clearTimeout(histTimer);
+        if (anyPending) histTimer = setTimeout(loadHistory, 20000);   // keep refreshing while something is in flight
+      }
+    } catch (e) {}
+  }
+  $('htDep').onclick = () => { $('htDep').classList.add('sel'); $('htWd').classList.remove('sel'); $('histDep').style.display = 'flex'; $('histWd').style.display = 'none'; };
+  $('htWd').onclick = () => { $('htWd').classList.add('sel'); $('htDep').classList.remove('sel'); $('histWd').style.display = 'flex'; $('histDep').style.display = 'none'; };
+
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
   document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });
 

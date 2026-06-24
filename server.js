@@ -210,6 +210,8 @@ const BTCPAY_URL = (process.env.BTCPAY_URL || '').replace(/\/+$/, '');
 const BTCPAY_KEY = process.env.BTCPAY_API_KEY || '';
 const BTCPAY_STORE = process.env.BTCPAY_STORE_ID || '';
 const BTCPAY_WH_SECRET = process.env.BTCPAY_WEBHOOK_SECRET || '';
+const DEPOSIT_FEE = 0.015;           // platform takes 1.5% of every deposit
+const CONFIRMS_TARGET = 2;           // confirmations a deposit/withdrawal needs to be "completed"
 function btcpayConfigured() { return !!(BTCPAY_URL && BTCPAY_KEY && BTCPAY_STORE); }
 
 async function btcpayCreateInvoice(amountUsd, userKey) {
@@ -274,6 +276,120 @@ async function btcpayGetPayout(payoutId) {
   if (!r.ok) throw new Error('btcpay getPayout ' + r.status + ': ' + (await r.text()));
   return await r.json();
 }
+async function btcpayGetInvoicePMs(invoiceId) {
+  try {
+    const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/invoices/' + invoiceId + '/payment-methods', {
+      headers: { 'Authorization': 'token ' + BTCPAY_KEY },
+    });
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d) ? d : [];
+  } catch (e) { return []; }
+}
+
+// ---- On-chain confirmation lookup via public explorers (display only; crediting stays BTCPay-driven) ----
+const EXPLORER = { BTC: 'https://blockstream.info/api', LTC: 'https://litecoinspace.org/api' };
+const tipCache = { BTC: { h: 0, at: 0 }, LTC: { h: 0, at: 0 } };
+async function tipHeight(coin) {
+  const c = coin === 'LTC' ? 'LTC' : 'BTC';
+  const now = Date.now();
+  if (now - tipCache[c].at < 30000 && tipCache[c].h) return tipCache[c].h;
+  try {
+    const r = await fetch(EXPLORER[c] + '/blocks/tip/height');
+    const h = parseInt(await r.text(), 10);
+    if (h > 0) tipCache[c] = { h, at: now };
+  } catch (e) {}
+  return tipCache[c].h;
+}
+async function txConfirmations(coin, txid) {
+  if (!txid) return null;
+  const c = coin === 'LTC' ? 'LTC' : 'BTC';
+  try {
+    const r = await fetch(EXPLORER[c] + '/tx/' + encodeURIComponent(txid));
+    if (!r.ok) return null;
+    const tx = await r.json();
+    if (!tx.status || !tx.status.confirmed) return 0;        // seen in mempool, 0 confirmations
+    const tip = await tipHeight(c);
+    if (!tip || !tx.status.block_height) return 1;
+    return Math.max(1, tip - tx.status.block_height + 1);
+  } catch (e) { return null; }
+}
+function pmCoin(pm) { return /LTC/i.test(pm.paymentMethodId || pm.paymentMethod || pm.cryptoCode || '') ? 'LTC' : 'BTC'; }
+function firstTxid(payments) {
+  for (const p of (payments || [])) {
+    const raw = p.id || p.transactionId || p.txId || p.destination || '';
+    const id = String(raw).split(/[-:]/)[0];
+    if (id && id.length >= 20) return id;
+  }
+  return null;
+}
+function payoutTxid(po) {
+  const pr = po && (po.proof || po.paymentProof);
+  if (!pr) return null;
+  const raw = pr.id || pr.txId || pr.txid || (pr.link ? pr.link.split('/').pop() : '') || '';
+  const id = String(raw).split(/[-:?#]/)[0];
+  return id && id.length >= 20 ? id : null;
+}
+
+// ---- Deposit + withdrawal history with live status/confirmations ----
+async function handleHistory(token) {
+  const key = sessionKey(token);
+  if (!key) return { error: 'Please log in again.' };
+  let rows;
+  try { rows = await store.listTxByUser(key); } catch (e) { console.error('history list failed:', e.message); return { error: 'Could not load history.' }; }
+  rows = rows || [];
+  const settledDep = new Set(rows.filter(r => r.kind === 'deposit').map(r => String(r.room_code)));
+  const doneWd = new Set(rows.filter(r => r.kind === 'withdraw_done').map(r => String(r.room_code)));
+  const refundWd = new Set(rows.filter(r => r.kind === 'withdraw_refunded').map(r => String(r.room_code)));
+
+  const deposits = [];
+  for (const r of rows.filter(r => r.kind === 'deposit')) {
+    deposits.push({ amount: r.amount, date: r.created_at, status: 'completed', confs: CONFIRMS_TARGET, target: CONFIRMS_TARGET });
+  }
+  for (const r of rows.filter(r => r.kind === 'deposit_pending' && !settledDep.has(String(r.room_code)))) {
+    let status = 'pending', confs = null, coin = null;
+    if (btcpayConfigured()) {
+      try {
+        const inv = await btcpayGetInvoice(r.room_code);
+        const s = String(inv.status || '').toLowerCase();
+        if (s === 'settled' || s === 'complete' || s === 'confirmed') { status = 'completed'; confs = CONFIRMS_TARGET; }
+        else if (s === 'expired' || s === 'invalid') { status = 'expired'; }
+        else if (s === 'processing' || s === 'paid') {
+          status = 'confirming';
+          const pms = await btcpayGetInvoicePMs(r.room_code);
+          const paid = pms.find(pm => (pm.payments || []).length > 0) || pms[0];
+          if (paid) { coin = pmCoin(paid); confs = await txConfirmations(coin, firstTxid(paid.payments)); }
+        }
+      } catch (e) {}
+    }
+    deposits.push({ amount: r.amount, date: r.created_at, status, confs, target: CONFIRMS_TARGET, coin });
+  }
+
+  const withdrawals = [];
+  for (const r of rows.filter(r => r.kind === 'withdraw')) {
+    const id = String(r.room_code);
+    if (refundWd.has(id)) { withdrawals.push({ amount: r.amount, date: r.created_at, status: 'refunded', target: CONFIRMS_TARGET }); continue; }
+    if (doneWd.has(id)) { withdrawals.push({ amount: r.amount, date: r.created_at, status: 'completed', confs: CONFIRMS_TARGET, target: CONFIRMS_TARGET }); continue; }
+    let status = 'sending', confs = null, coin = null;
+    if (btcpayConfigured()) {
+      try {
+        const po = await btcpayGetPayout(id);
+        const st = String(po.state || '').toLowerCase();
+        coin = /LTC/i.test(po.payoutMethodId || po.paymentMethod || '') ? 'LTC' : 'BTC';
+        if (st === 'completed') { status = 'completed'; confs = CONFIRMS_TARGET; store.addTx({ username_lower: key, kind: 'withdraw_done', amount: r.amount, room_code: id }).catch(() => {}); }
+        else if (st === 'awaitingapproval') status = 'review';
+        else if (st === 'cancelled') status = 'cancelled';
+        else { // awaitingpayment / inprogress
+          status = 'sending';
+          const c = await txConfirmations(coin, payoutTxid(po));
+          if (c != null) { confs = c; status = 'confirming'; }
+        }
+      } catch (e) {}
+    }
+    withdrawals.push({ amount: r.amount, date: r.created_at, status, confs, target: CONFIRMS_TARGET, coin });
+  }
+  return { ok: true, deposits, withdrawals };
+}
 async function handleWithdrawCreate(token, amount, coin, address) {
   const key = sessionKey(token);
   if (!key) return { error: 'Please log in again.' };
@@ -325,9 +441,10 @@ async function handleBtcpayWebhook(req, rawBody) {
     const amt = Math.floor(Number(inv.amount) || 0);
     const key = inv.metadata && inv.metadata.username;
     if (key && amt > 0) {
-      const newC = await changeCredits(key, amt);
+      const credited = Math.max(0, Math.floor(amt * (1 - DEPOSIT_FEE)));   // platform takes a 1.5% deposit fee
+      const newC = await changeCredits(key, credited);
       reflectCredits(key, newC);
-      await store.addTx({ username_lower: key, kind: 'deposit', amount: amt, room_code: ev.invoiceId });
+      await store.addTx({ username_lower: key, kind: 'deposit', amount: credited, room_code: ev.invoiceId });
     }
   }
   // Payout was cancelled -> refund the player's escrowed credits (idempotent).
@@ -409,6 +526,7 @@ const server = http.createServer((req, res) => {
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
         else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
         else if (req.url === '/api/withdraw/create') result = await handleWithdrawCreate(data.token, data.amount, data.coin, data.address);
+        else if (req.url === '/api/history') result = await handleHistory(data.token);
         else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
         res.writeHead(result.error ? 400 : 200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));

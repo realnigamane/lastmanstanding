@@ -103,6 +103,12 @@ async function sbGetTx(kind, ref) {
   const rows = await r.json();
   return rows[0] || null;
 }
+async function sbListTxByUser(key) {
+  const url = SB_URL + '/rest/v1/game_transactions?username_lower=eq.' + encodeURIComponent(key) + '&select=*&order=created_at.desc&limit=200';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listTxByUser ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
 
 // ---------------- Local file backend ----------------
 const DATA_DIR = path.join(__dirname, 'data');
@@ -164,13 +170,16 @@ async function fileAddTx(t) {
 async function fileGetTx(kind, ref) {
   return txs.find(t => t.kind === kind && String(t.room_code) === String(ref)) || null;
 }
+async function fileListTxByUser(key) {
+  return txs.filter(t => t.username_lower === key).slice().reverse();
+}
 
 module.exports = useSupabase
   ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
       recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
       listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus,
-      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx }
+      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }
   : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
       recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
       listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus,
-      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx };
+      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser };
