@@ -201,7 +201,7 @@
     try {
       const d = await (await fetch('/api/online', { cache: 'no-store' })).json();
       const el = $('liveSearching');
-      if (el && d) el.textContent = (d.searching != null ? d.searching : 0);
+      if (el && d) el.textContent = (d.online != null ? d.online : 0);
     } catch (e) {}
   }
   loadOnline();
