@@ -582,9 +582,11 @@ const PLAT_H = 16;
 const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
 const SPREAD = 110;                  // max horizontal shift between rungs — always within a jump's reach
 
-// Hazards — uncontrollable bouncing balls that can knock ANYONE off, skill or not.
+// Hazards — telegraphed, readable bouncing balls. Every ball warns before it drops and follows
+// deterministic physics, so a skilled player can ALWAYS dodge it. Hard, but never luck.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
 const HAZARD_FIRST = 13, HAZARD_MAX = 4;           // calm opening: first ball at 13s, then ramps up
+const HAZARD_WARN = 0.8;                            // seconds of warning before a ball drops
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -689,10 +691,10 @@ function reachableX(room, width) {
   return cx - width / 2;
 }
 function makePlatform(room, y, width, moving) {
-  const w = width != null ? width : 135 + Math.floor(Math.random() * 85);
+  const w = width != null ? width : 92 + Math.floor(Math.random() * 70);   // narrower — takes skill to land & hold
   const x = reachableX(room, w);
   const p = { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: 0, dx: 0 };
-  if (moving) { p.homeX = x; p.amp = 18 + Math.random() * 18; p.phase = Math.random() * 6.283; p.spd = 0.018 + Math.random() * 0.018; }
+  if (moving) { p.homeX = x; p.amp = 28 + Math.random() * 30; p.phase = Math.random() * 6.283; p.spd = 0.024 + Math.random() * 0.026; }   // faster, wider drift
   return p;
 }
 function setupRound(room) {
@@ -713,7 +715,7 @@ function setupRound(room) {
   let idx = 0;
   while (y > -160) {
     y -= GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN);
-    const moving = idx >= 3 && Math.random() < 0.45;   // first few rungs static for a reliable start
+    const moving = idx >= 3 && Math.random() < 0.6;   // first few rungs static for a reliable start; more movers above
     room.platforms.push(makePlatform(room, y, null, moving));
     idx++;
   }
@@ -808,13 +810,15 @@ function spawnHazard(room) {
     id: hazSeq++,
     x: HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R),
     y: -HAZARD_R - 10,
-    vx: (1.5 + Math.random() * 4.5) * (Math.random() < 0.5 ? -1 : 1),
-    vy: 1.5 + Math.random() * 3, r: HAZARD_R,
+    vx: (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1),   // fixed per ball — readable trajectory
+    vy: 0, r: HAZARD_R,
+    warn: HAZARD_WARN,                                                // telegraph before it drops
   });
 }
 function resetHazard(b) {
   b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
-  b.y = -HAZARD_R - 10; b.vx = (1.5 + Math.random() * 4.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 1.5 + Math.random() * 3;
+  b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 0;
+  b.warn = HAZARD_WARN;
 }
 // Calm opening, hectic late: balls only appear after HAZARD_FIRST, then get faster and
 // more numerous the longer the round runs and the more players are eliminated.
@@ -830,22 +834,19 @@ function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
   const hf = hazardFactor(room);
   for (const b of room.hazards) {
+    if (b.warn > 0) { b.warn -= 1 / 60; b.y = -HAZARD_R - 10; continue; }   // telegraphing — parked above, not lethal yet
     b.vy += HAZARD_GRAV * hf;
     b.x += b.vx * hf;
     b.y += b.vy + scrollPx;
-    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx) * (0.85 + Math.random() * 0.6); }
-    if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx) * (0.85 + Math.random() * 0.6); }
+    if (b.x < b.r) { b.x = b.r; b.vx = Math.abs(b.vx); }                    // clean reflection — fully readable
+    if (b.x > WORLD.w - b.r) { b.x = WORLD.w - b.r; b.vx = -Math.abs(b.vx); }
     if (b.y < b.r) { b.y = b.r; b.vy = Math.abs(b.vy) * 0.6; }
     if (b.vy > 0) {
       for (const plat of room.platforms) {
         if (b.x + b.r > plat.x && b.x - b.r < plat.x + plat.w &&
             b.y + b.r >= plat.y && b.y + b.r <= plat.y + plat.h + 14) {
           b.y = plat.y - b.r;
-          b.vy = HAZARD_BOUNCE * hf * (0.72 + Math.random() * 0.56);   // wider bounce height — less predictable
-          b.vx += (Math.random() * 2 - 1) * 3.8;            // bigger unpredictable sideways kick on every bounce
-          if (Math.random() < 0.3) b.vx = -b.vx;            // reverse more often — no learnable pattern
-          if (Math.random() < 0.12) b.vx = (1.5 + Math.random() * 6) * (Math.random() < 0.5 ? -1 : 1);  // occasional random re-roll
-          b.vx = Math.max(-8.5, Math.min(8.5, b.vx));       // bounded so balls stay on-screen and fair
+          b.vy = HAZARD_BOUNCE * hf;                        // deterministic bounce — predictable arc, dodgeable
           break;
         }
       }
@@ -1019,7 +1020,7 @@ function roomSnapshot(room) {
     wager: room.wager, pot: room.pot,
     scroll: Math.round(room.scrollSpeed),
     platforms: room.platforms.map(p => ({ id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: p.w, h: p.h })),
-    hazards: room.hazards.map(b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), r: b.r })),
+    hazards: room.hazards.map(b => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), r: b.r, w: b.warn > 0 ? 1 : 0 })),
     players: [...room.members.values()].map(s => ({
       id: s.username, name: s.username, color: s.player.color,
       x: Math.round(s.player.x), y: Math.round(s.player.y),
@@ -1081,7 +1082,7 @@ ws.attach(server, (conn) => {
       const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
       if (wager > 0) {
         const deb = await debitIfEnough(s.key, wager); // escrow the stake on join (atomic)
-        if (!deb.ok) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that wager.' })); } catch (e) {} return; }
+        if (!deb.ok) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that entry fee.' })); } catch (e) {} return; }
         s.credits = deb.credits; s.wagerPaid = wager;
         try { conn.send(JSON.stringify({ t: 'credits', credits: deb.credits })); } catch (e) {}
       } else { s.wagerPaid = 0; }

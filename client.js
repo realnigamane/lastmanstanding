@@ -251,7 +251,7 @@
     showScreen('home');
   };
   function renderSearching(m) {
-    const tail = m.wager > 0 ? (' · 💰 pot ' + m.pot) : '';
+    const tail = m.wager > 0 ? (' · 🏆 prize pool ' + m.pot) : '';
     $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;
     const dots = $('srDots');
     const lit = Math.min(m.target, Math.max(m.found, m.target - m.secs));
@@ -379,6 +379,16 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawWarn(x) {
+    // Pulsing red marker at the top of the column where a ball is about to drop.
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 90);
+    ctx.save();
+    ctx.globalAlpha = 0.35 + 0.55 * pulse;
+    ctx.fillStyle = '#ff5a4d';
+    ctx.beginPath(); ctx.moveTo(x - 12, 6); ctx.lineTo(x + 12, 6); ctx.lineTo(x, 26); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
   function draw() {
     requestAnimationFrame(draw);
     if (curScreen !== 'game' || snapBuf.length === 0) return;
@@ -433,8 +443,9 @@
       ctx.fillStyle = '#6b78cf'; ctx.fillRect(t.x + 3, t.y + 2, p.w - 6, 3);
     }
 
-    // hazards — interpolated, drawn from the cached glow sprite
+    // hazards — telegraph a warning first (always dodgeable), then the interpolated ball
     for (const [id, b] of s1.hazards) {
+      if (b.w) { drawWarn(b.x); continue; }    // warning marker in the column it will drop into
       const t = ipos(s0.hazards.get(id), b);
       if (t.y < -hazSpriteR || t.y > H + hazSpriteR) continue;
       ctx.drawImage(hazSprite, Math.round(t.x - hazSpriteR), Math.round(t.y - hazSpriteR));
@@ -486,7 +497,7 @@
   function drawHUD() {
     ctx.textAlign = 'left'; ctx.font = 'bold 15px Segoe UI, sans-serif'; ctx.fillStyle = '#c9d2ff';
     ctx.fillText('Alive: ' + snap.alive + ' / ' + snap.total, 14, 24);
-    if (snap.wager > 0) { ctx.fillStyle = '#ffd479'; ctx.fillText('💰 Pot ' + snap.pot, 14, 44); }
+    if (snap.wager > 0) { ctx.fillStyle = '#ffd479'; ctx.fillText('🏆 Prize pool ' + snap.pot, 14, 44); }
     if (snap.phase === 'playing') {
       ctx.textAlign = 'right'; ctx.fillStyle = '#ffd479'; ctx.font = 'bold 15px Segoe UI, sans-serif';
       ctx.fillText('Survived: ' + snap.roundTime + 's', W - 14, 24);
@@ -495,7 +506,7 @@
         ctx.fillText('Climb! The floor is rising — keep jumping up', W / 2, 26);
       } else if (snap.roundTime < 11 && snap.hazards && snap.hazards.length) {
         ctx.textAlign = 'center'; ctx.fillStyle = '#ffae42'; ctx.font = 'bold 15px Segoe UI, sans-serif';
-        ctx.fillText('Watch out — dodge the balls!', W / 2, 26);
+        ctx.fillText('Balls incoming — watch the warnings, every one is dodgeable!', W / 2, 26);
       }
     }
   }
