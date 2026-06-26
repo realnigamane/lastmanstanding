@@ -546,6 +546,22 @@ const server = http.createServer((req, res) => {
     }).catch(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ btc: 0, ltc: 0 })); });
     return;
   }
+  // Live player counts: real (non-bot) connected players, how many are in the
+  // matchmaking queue, and how many are in active matches. Used by the dashboard.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/online') {
+    let searching = 0, playing = 0, online = 0;
+    for (const s of allSessions.values()) {
+      if (!s.username) continue;                 // only authed humans
+      online++;
+      if (s.room) {
+        if (s.room.phase === 'matchmaking') searching++;
+        else playing++;                          // countdown / playing / roundover
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ searching, playing, online }));
+    return;
+  }
   // Static files: serve ONLY these from the project root. An explicit allowlist
   // means server code, .env, and other files can never be fetched over the web.
   const STATIC = new Set(['index.html', 'client.js', 'admin.html']);

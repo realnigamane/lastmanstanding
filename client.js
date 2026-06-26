@@ -196,6 +196,17 @@
   loadRates();
   setInterval(loadRates, 30000);
 
+  // ---------- Live "players searching for matches" count ----------
+  async function loadOnline() {
+    try {
+      const d = await (await fetch('/api/online', { cache: 'no-store' })).json();
+      const el = $('liveSearching');
+      if (el && d) el.textContent = (d.searching != null ? d.searching : 0);
+    } catch (e) {}
+  }
+  loadOnline();
+  setInterval(loadOnline, 8000);
+
   // ---------- Transaction history (deposits + withdrawals, live status) ----------
   let histTimer = null;
   const PENDINGY = new Set(['pending', 'confirming', 'sending', 'review']);

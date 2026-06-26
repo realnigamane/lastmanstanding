@@ -121,6 +121,10 @@
   .wagers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .wager { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 14px; padding: 10px 6px; }
   .wager span { font-size: 11px; font-weight: 600; opacity: .8; }
+  .livecount { display: flex; align-items: center; font-size: 13px; color: #9fffce; margin: 0 0 10px; }
+  .livecount b { color: #fff; margin: 0 2px; }
+  .livedot { width: 8px; height: 8px; border-radius: 50%; background: #32ff7e; margin-right: 7px; box-shadow: 0 0 0 0 rgba(50,255,126,.6); animation: livepulse 1.8s infinite; }
+  @keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(50,255,126,.6); } 70% { box-shadow: 0 0 0 7px rgba(50,255,126,0); } 100% { box-shadow: 0 0 0 0 rgba(50,255,126,0); } }
 
   /* Deposit / Withdraw converter */
   .coinpick { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -211,6 +215,7 @@
 
       <div class="card">
         <h2>Practice</h2>
+        <div id="liveCount" class="livecount"><span class="livedot"></span><b id="liveSearching">—</b>&nbsp;players searching for matches now</div>
         <p class="sub" style="margin:0 0 12px">Free play to sharpen your skills before cash tournaments — no entry fee.</p>
         <button id="btnFind" class="wide big">🎮 Practice Match</button>
         <button id="btnCash" class="wide" style="margin-top:10px;background:linear-gradient(90deg,#ffd479,#ff9f43)">🏆 Cash Tournament</button>
