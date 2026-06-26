@@ -201,7 +201,10 @@
     try {
       const d = await (await fetch('/api/online', { cache: 'no-store' })).json();
       const el = $('liveSearching');
-      if (el && d) el.textContent = (d.online != null ? d.online : 0);
+      const n = (d && d.online != null) ? d.online : 0;
+      if (el) el.textContent = n;
+      const w = $('liveWord');
+      if (w) w.textContent = (n === 1 ? 'player' : 'players');
     } catch (e) {}
   }
   loadOnline();
