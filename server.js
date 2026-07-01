@@ -607,9 +607,30 @@ const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
                 '#7d5fff', '#ff4d97', '#5ad1cd', '#ff9f43', '#badc58'];
-const BOT_NAMES = ['Riley', 'Max', 'Nova', 'Kai', 'Zoe', 'Leo', 'Mia', 'Finn',
-                   'Ivy', 'Jax', 'Luna', 'Ace', 'Remy', 'Sky', 'Theo', 'Wren',
-                   'Echo', 'Bolt', 'Pixel', 'Dash'];
+// Varied, human-looking usernames (social-media handle style) for AI opponents.
+const NAME_A = ['shadow','ghost','ninja','duck','frost','pixel','turbo','crimson','neo','viper',
+  'lunar','byte','storm','ace','rogue','zen','echo','blitz','nova','riot','sly','mako','drift',
+  'booty','goose','quack','savage','vortex','onyx','rapid','hydro','cyber','mystic','flux','toxic',
+  'grim','jelly','waffle','mango','goblin','phantom','static','ember','shark','wolf','raven'];
+const NAME_B = ['man','gamer','king','lord','wolf','fox','beast','slayer','master','hunter','ryder',
+  'kid','boss','star','wizard','gremlin','goblin','sniper','legend','vibes','czar','punk','duck',
+  'god','ghost','mania','face','head','tron','zilla','bandit','ninja','pro'];
+function randomUsername() {
+  const r = Math.random();
+  const a = NAME_A[Math.floor(Math.random() * NAME_A.length)];
+  const b = NAME_B[Math.floor(Math.random() * NAME_B.length)];
+  const nums = ['', '', String(Math.floor(Math.random() * 99)),
+                String(Math.floor(Math.random() * 9000) + 1000),
+                '3000', '420', '69', '777', '99', '007'];
+  const num = nums[Math.floor(Math.random() * nums.length)];
+  if (r < 0.32) return a + b + num;
+  if (r < 0.55) return a + '_' + b + num;
+  if (r < 0.72) return (Math.random() < 0.5 ? 'xX' : '') + a + b + (Math.random() < 0.5 ? 'Xx' : num);
+  if (r < 0.86) return a + '.' + b;
+  return a + num + b;
+}
+// Bots keep themselves in the visible frame — they won't leap above this line (looks human).
+const TOP_SAFE = 72;
 
 // =================== Matchmaking / rooms ===================
 const rooms = new Map();         // code -> room
@@ -679,23 +700,34 @@ function leaveMatch(s, silent) {
 // ---- bots ----
 function uniqueBotName(room) {
   const taken = new Set([...room.members.values()].map(m => m.username.toLowerCase()));
-  const pool = BOT_NAMES.filter(n => !taken.has(n.toLowerCase()));
-  let name = (pool.length ? pool[Math.floor(Math.random() * pool.length)]
-                          : BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)]);
-  while (taken.has(name.toLowerCase())) name = name + (Math.floor(Math.random() * 90) + 10);
+  let name = randomUsername(), guard = 0;
+  while (taken.has(name.toLowerCase()) && guard++ < 40) name = randomUsername();
+  while (taken.has(name.toLowerCase())) name += Math.floor(Math.random() * 99);
   return name;
 }
 function makeBot(room) {
   const bot = {
     id: nextSessionId++, isBot: true, username: uniqueBotName(room),
     conn: { send() {} }, room, player: newPlayer(),
-    ai: { skill: 0.8 + Math.random() * 0.2, jitter: (Math.random() - 0.5) * 9, aim: 14 + Math.random() * 26, retargetIn: 0, target: null },
+    ai: { skill: 0.82 + Math.random() * 0.14, jitter: (Math.random() - 0.5) * 7, aim: 12 + Math.random() * 20,
+          react: 2 + Math.floor(Math.random() * 7), reactT: 0, elite: false, retargetIn: 0, target: null },
   };
   room.members.set(bot.id, bot);
   return bot;
 }
 function fillWithBots(room) {
   while (room.members.size < MATCH_SIZE) makeBot(room);
+  // Make up to 2 opponents genuinely elite: near-flawless dodging, precise landings, fast reactions.
+  const bots = [...room.members.values()].filter(m => m.isBot);
+  const shuffled = bots.slice().sort(() => Math.random() - 0.5);
+  for (let i = 0; i < Math.min(2, shuffled.length); i++) {
+    const a = shuffled[i].ai;
+    a.elite = true;
+    a.skill = 1;
+    a.jitter = (Math.random() - 0.5) * 2;   // near-perfect, but not robotically pixel-exact
+    a.aim = 7 + Math.random() * 4;
+    a.react = 1 + Math.floor(Math.random() * 2);
+  }
 }
 
 // =================== Level (climb-or-die) ===================
@@ -887,17 +919,19 @@ function stepHazards(room) {
 // =================== Bot AI (competitive) ===================
 function botThink(room, bot) {
   const p = bot.player;
+  const ai = bot.ai;
   if (!p.alive || p.spectator) { p.input.left = p.input.right = p.input.jump = false; return; }
   const feet = p.y + PH, cx = p.x + PW / 2;
 
   const onGround = p.onPlatform != null;
-  let best = bot.ai.target != null ? room.platforms.find(pl => pl.id === bot.ai.target) : null;
+  let best = ai.target != null ? room.platforms.find(pl => pl.id === ai.target) : null;
   if (best && best.y >= feet - 2) best = null;
   if (onGround || !best) {
     best = null; let bestScore = Infinity, nearest = null, nearGap = Infinity;
     for (const plat of room.platforms) {
-      if (plat.y >= feet - 4) continue;
-      if (plat.y < p.y - 168) continue;
+      if (plat.y >= feet - 4) continue;              // must be above us
+      if (plat.y < p.y - 168) continue;              // within a single jump's reach
+      if (plat.y < TOP_SAFE) continue;               // stay on-screen — never leap above the frame
       const gap = Math.abs((plat.x + plat.w / 2) - cx);
       if (gap < nearGap) { nearGap = gap; nearest = plat; }
       if (gap > 230) continue;
@@ -905,35 +939,49 @@ function botThink(room, bot) {
       if (score < bestScore) { bestScore = score; best = plat; }
     }
     if (!best) best = nearest;
-    if (!best) { let hi = Infinity; for (const plat of room.platforms) if (plat.y < hi && plat.y < feet) { hi = plat.y; best = plat; } }
-    if (best) bot.ai.target = best.id;
+    if (!best) { let hi = Infinity; for (const plat of room.platforms) if (plat.y < hi && plat.y < feet && plat.y >= TOP_SAFE) { hi = plat.y; best = plat; } }
+    if (best) ai.target = best.id;
   }
-  let evade = 0;
+
+  // Hazard evasion — skilled bots see the ball coming earlier and from farther away.
+  let evade = 0, danger = false;
+  const reach = 76 + ai.skill * 48;
   for (const b of room.hazards) {
     const bx = cx - b.x, by = (feet - PH / 2) - b.y;
-    if (bx * bx + by * by < (b.r + 72) * (b.r + 72)) { evade = bx >= 0 ? 1 : -1; break; }
+    if (bx * bx + by * by < (b.r + reach) * (b.r + reach)) { evade = bx >= 0 ? 1 : -1; danger = true; break; }
   }
+
   let goX = best ? (best.x + best.w / 2) : cx;
-  if (evade) goX = cx + evade * 140;
-  goX += bot.ai.jitter;
+  if (evade) goX = cx + evade * 150;
+  goX += ai.jitter;
   const d = goX - cx;
-  p.input.left = d < -4;
-  p.input.right = d > 4;
+  p.input.left = d < -3;
+  p.input.right = d > 3;
+
   let wantJump = false;
   if (onGround) {
     const plat = room.platforms.find(pl => pl.id === p.onPlatform);
-    if (best && best.y < feet - 6) {
+    if (best && best.y < feet - 6 && best.y >= TOP_SAFE) {
       const tcx = best.x + best.w / 2;
-      if (Math.abs(tcx - cx) < best.w / 2 + bot.ai.aim) wantJump = true;
+      if (Math.abs(tcx - cx) < best.w / 2 + ai.aim) wantJump = true;
       else if (plat) {
         if (tcx > cx && cx > plat.x + plat.w - 26) wantJump = true;
         if (tcx < cx && cx < plat.x + 26) wantJump = true;
       }
     }
-    if (feet > WORLD.h - 58) wantJump = true;
-    if (evade && feet > 150) wantJump = true;
+    if (feet > WORLD.h - 58) wantJump = true;         // forced: the rising floor is here
+    if (danger && feet > 150) wantJump = true;        // dodge an incoming ball
   }
-  p.input.jump = wantJump && !p.jumpHeld;
+
+  // Per-bot reaction delay so they don't all jump on the exact same tick (that was the obvious tell).
+  if (wantJump) {
+    if (ai.reactT <= 0) ai.reactT = ai.react;
+    ai.reactT--;
+    p.input.jump = (ai.reactT <= 0) && !p.jumpHeld;
+  } else {
+    ai.reactT = 0;
+    p.input.jump = false;
+  }
 }
 
 // =================== Match flow ===================
