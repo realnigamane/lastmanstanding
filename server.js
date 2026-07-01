@@ -591,18 +591,18 @@ const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // wait for humans,
 const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
-const SCROLL_START = 27;    // px/sec at the start of a round
-const SCROLL_RAMP = 2.1;    // added px/sec each second — gentle so the climb stays playable
-const SCROLL_MAX = 118;     // hardest steady speed (still climbable; deaths come from misses/balls)
+const SCROLL_START = 31;    // px/sec at the start of a round — quicker off the line
+const SCROLL_RAMP = 2.5;    // added px/sec each second — climbs to top speed sooner
+const SCROLL_MAX = 128;     // hardest steady speed (still climbable; deaths come from misses/balls)
 const PLAT_H = 16;
-const GAP_MIN = 78, GAP_MAX = 104;   // vertical spacing between rungs (reachable by a jump)
-const SPREAD = 110;                  // max horizontal shift between rungs — always within a jump's reach
+const GAP_MIN = 84, GAP_MAX = 116;   // wider vertical spacing — still reachable by a jump, less margin
+const SPREAD = 114;                  // max horizontal shift between rungs — always within a jump's reach
 
 // Hazards — telegraphed, readable bouncing balls. Every ball warns before it drops and follows
 // deterministic physics, so a skilled player can ALWAYS dodge it. Hard, but never luck.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 13, HAZARD_MAX = 4;           // calm opening: first ball at 13s, then ramps up
-const HAZARD_WARN = 0.8;                            // seconds of warning before a ball drops
+const HAZARD_FIRST = 10, HAZARD_MAX = 6;           // balls arrive sooner and pile up thicker late
+const HAZARD_WARN = 0.65;                           // shorter telegraph — you must read & react faster (still always dodgeable)
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
 const COLORS = ['#ff5252', '#ffb142', '#fff35c', '#32ff7e', '#18dcff',
@@ -739,10 +739,10 @@ function reachableX(room, width) {
   return cx - width / 2;
 }
 function makePlatform(room, y, width, moving) {
-  const w = width != null ? width : 92 + Math.floor(Math.random() * 70);   // narrower — takes skill to land & hold
+  const w = width != null ? width : 78 + Math.floor(Math.random() * 62);   // narrower still — precise landings required
   const x = reachableX(room, w);
   const p = { id: room.nextPlatId++, x, y, w, h: PLAT_H, vx: 0, dx: 0 };
-  if (moving) { p.homeX = x; p.amp = 28 + Math.random() * 30; p.phase = Math.random() * 6.283; p.spd = 0.024 + Math.random() * 0.026; }   // faster, wider drift
+  if (moving) { p.homeX = x; p.amp = 30 + Math.random() * 34; p.phase = Math.random() * 6.283; p.spd = 0.028 + Math.random() * 0.030; }   // faster, wider drift
   return p;
 }
 function setupRound(room) {
@@ -763,7 +763,7 @@ function setupRound(room) {
   let idx = 0;
   while (y > -160) {
     y -= GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN);
-    const moving = idx >= 3 && Math.random() < 0.6;   // first few rungs static for a reliable start; more movers above
+    const moving = idx >= 2 && Math.random() < 0.72;   // movers kick in earlier and dominate — more timing pressure
     room.platforms.push(makePlatform(room, y, null, moving));
     idx++;
   }
@@ -858,14 +858,14 @@ function spawnHazard(room) {
     id: hazSeq++,
     x: HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R),
     y: -HAZARD_R - 10,
-    vx: (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1),   // fixed per ball — readable trajectory
+    vx: (2.6 + Math.random() * 3.0) * (Math.random() < 0.5 ? -1 : 1),   // faster, fixed per ball — readable but tighter to dodge
     vy: 0, r: HAZARD_R,
     warn: HAZARD_WARN,                                                // telegraph before it drops
   });
 }
 function resetHazard(b) {
   b.x = HAZARD_R + Math.random() * (WORLD.w - 2 * HAZARD_R);
-  b.y = -HAZARD_R - 10; b.vx = (2 + Math.random() * 2.5) * (Math.random() < 0.5 ? -1 : 1); b.vy = 0;
+  b.y = -HAZARD_R - 10; b.vx = (2.6 + Math.random() * 3.0) * (Math.random() < 0.5 ? -1 : 1); b.vy = 0;
   b.warn = HAZARD_WARN;
 }
 // Calm opening, hectic late: balls only appear after HAZARD_FIRST, then get faster and
@@ -876,7 +876,7 @@ function hazardFactor(room) {
 }
 function targetHazards(room) {
   if (room.roundTime < HAZARD_FIRST) return 0;
-  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 16) + Math.floor(room.eliminated / 5));
+  return Math.min(HAZARD_MAX, 1 + Math.floor((room.roundTime - HAZARD_FIRST) / 12) + Math.floor(room.eliminated / 4));
 }
 function stepHazards(room) {
   const scrollPx = room.scrollSpeed / 60;
@@ -1013,12 +1013,12 @@ function updateRoom(room, dt) {
     let ss = Math.min(SCROLL_MAX, SCROLL_START + room.roundTime * SCROLL_RAMP);
     // Speed climbs a bit more from 80s, then LOCKS at the 90s pace and holds forever —
     // from there it's pure survival, not an ever-faster wall.
-    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 10;
+    if (room.roundTime > 80) ss = SCROLL_MAX + (Math.min(room.roundTime, 90) - 80) * 11;
     room.scrollSpeed = ss;
     if (room.roundTime >= room.nextHazardAt && room.hazards.length < targetHazards(room)) {
       spawnHazard(room);
       const ramp = Math.max(0, room.roundTime - HAZARD_FIRST);
-      room.nextHazardAt = room.roundTime + Math.max(2.0, 8.5 - room.eliminated * 0.4 - ramp * 0.06);
+      room.nextHazardAt = room.roundTime + Math.max(1.5, 7.0 - room.eliminated * 0.4 - ramp * 0.07);
     }
     for (const s of room.members.values()) if (s.isBot) botThink(room, s);
     stepPhysics(room);
