@@ -21,7 +21,7 @@
   const stars = [];                // decorative parallax starfield
 
   // ---------- Screens ----------
-  const screens = ['auth', 'boot', 'home', 'searching', 'game'];
+  const screens = ['auth', 'boot', 'home', 'searching', 'lobby', 'game'];
   function showScreen(name) {
     curScreen = name;
     for (const s of screens) $(s).classList.toggle('active', s === name);
@@ -93,6 +93,13 @@
       snap = null; snapBuf = []; clockReady = false; lastFrameT = 0;
       showScreen('home');
       loadLive();
+    } else if (m.t === 'lobby') {
+      isWatching = false; document.body.classList.remove('spectating'); lastSpec = false;
+      snap = null; snapBuf = [];
+      renderLobby(m);
+      if (curScreen !== 'lobby') showScreen('lobby');
+    } else if (m.t === 'lobbyError') {
+      $('lbResult').textContent = m.error || 'Could not ready up.';
     } else if (m.t === 'credits') {
       myCredits = m.credits; $('hmCredits').textContent = m.credits;
     } else if (m.t === 'matchError') {
@@ -297,6 +304,27 @@
     showScreen('home');
     loadLive();
   };
+  // ---------- Lobby (ready-up between matches) ----------
+  $('btnReady').onclick = () => { sendWS({ t: 'ready' }); };
+  $('btnLeaveLobby').onclick = () => { sendWS({ t: 'leaveLobby' }); showScreen('home'); loadLive(); };
+  function renderLobby(m) {
+    if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
+    if (m.wins != null) $('hmWins').textContent = m.wins;
+    if (m.rank) $('hmRank').textContent = m.rank.tier;
+    $('lbSub').textContent = m.wager > 0
+      ? ('Ready up to enter the next cash match — costs ' + m.wager + ' credits. Last duck standing takes the prize pool.')
+      : 'Ready up to play the next round — free.';
+    $('lbResult').textContent = (m.won && m.payout) ? ('🏆 You won! +' + m.payout + ' credits') : '';
+    const secs = m.secs != null ? m.secs : 0;
+    $('lbTimer').textContent = secs > 0 ? ('Starting in ' + secs + 's…') : 'Starting…';
+    $('lbList').innerHTML = (m.members || []).map(p => {
+      const nm = String(p.name).replace(/[<>&]/g, '');
+      return '<div class="lbrow"><span>' + nm + '</span><span class="rd ' + (p.ready ? 'y' : 'n') + '">' + (p.ready ? '✓ Ready' : '…') + '</span></div>';
+    }).join('');
+    const rb = $('btnReady');
+    if (m.youReady) { rb.textContent = '✓ Ready — waiting for others'; rb.disabled = true; rb.style.opacity = .6; }
+    else { rb.textContent = m.wager > 0 ? ('✅ Ready up (' + m.wager + ' credits)') : '✅ Ready up'; rb.disabled = false; rb.style.opacity = 1; }
+  }
   function renderSearching(m) {
     const tail = m.wager > 0 ? (' · 🏆 prize pool ' + m.pot) : '';
     $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;

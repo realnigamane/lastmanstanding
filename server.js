@@ -605,6 +605,8 @@ const MATCH_SIZE = 8;                                       // target players pe
 const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // base fill window before bots backfill
 const JOIN_EXTEND_S = 6;    // each time a human joins a waiting lobby, keep it open a few more seconds
 const MATCH_WAIT_MAX = 25;  // ...but never make anyone wait longer than this since the lobby opened
+const LOBBY_S = 30;         // post-match ready-up window (practice)
+const LOBBY_CASH_HOLD = 15; // cash: hold for real players, then backfill bots and start
 const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
@@ -693,7 +695,7 @@ function addToMatch(s, wager) {
   if (s.room) leaveMatch(s, true);
   let room = [...rooms.values()].find(r => r.phase === 'matchmaking' && r.wager === wager && humanCount(r) < MATCH_SIZE);
   if (!room) room = createRoom(wager);
-  s.room = room; s.player = newPlayer();
+  s.room = room; s.player = newPlayer(); s.ready = true;   // matchmaking players are auto-ready (they paid on join)
   room.members.set(s.id, s);
   // Momentum-based fill window: each human who joins keeps the lobby open a little longer
   // so real players keep gathering instead of the timer expiring into a bot-heavy match —
@@ -710,15 +712,16 @@ function leaveMatch(s, silent) {
   if (!room) return;
   // Refund the escrowed wager only if the match has NOT started (still matchmaking).
   // Leaving once it's started forfeits the stake (it stays in the pot).
-  if (s.wagerPaid > 0 && room.phase === 'matchmaking') {
+  if (s.wagerPaid > 0 && (room.phase === 'matchmaking' || room.phase === 'lobby')) {
     const k = s.key;
     changeCredits(k, s.wagerPaid).then(nc => { if (s.key === k) { s.credits = nc; } reflectCredits(k, nc); }).catch(() => {});
   }
-  s.wagerPaid = 0;
+  s.wagerPaid = 0; s.ready = false;
   room.members.delete(s.id);
   s.room = null; s.player = null;
   if (humanCount(room) === 0) { killRoom(room); }      // no humans -> drop match (and its bots)
   else if (room.phase === 'matchmaking') sendSearch(room);
+  else if (room.phase === 'lobby') broadcastLobby(room);
   if (!silent) try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {}
 }
 
@@ -1021,6 +1024,44 @@ function startMatch(room) {
   room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
   broadcastRoom(room);
 }
+
+// ---- Post-match ready-up lobby ----
+function lobbyMembers(room) {
+  return [...room.members.values()].filter(s => !s.isBot).map(s => ({ name: s.username, ready: !!s.ready }));
+}
+function broadcastLobby(room) {
+  const deadline = room.wager > 0 ? LOBBY_CASH_HOLD : LOBBY_S;
+  const base = { t: 'lobby', wager: room.wager, secs: Math.max(0, Math.ceil(deadline - (room.lobbyTimer || 0))),
+                 members: lobbyMembers(room), total: humanCount(room) };
+  for (const s of room.members.values()) {
+    if (s.isBot) continue;
+    const msg = Object.assign({}, base, { credits: s.credits, youReady: !!s.ready });
+    if (s.wonStats) { msg.won = true; msg.payout = s.wonStats.payout; msg.wins = s.wonStats.wins; msg.rank = s.wonStats.rank; s.wonStats = null; }
+    try { s.conn.send(JSON.stringify(msg)); } catch (e) {}
+  }
+}
+function enterLobby(room) {
+  endWatchers(room);                                   // the live game is over
+  for (const [id, m] of [...room.members]) if (m.isBot) room.members.delete(id);   // drop bots
+  if (humanCount(room) === 0) { killRoom(room); return; }
+  room.phase = 'lobby'; room.lobbyTimer = 0; room.pot = 0; room.winnerName = null;
+  room.hazards = []; room.platforms = [];
+  for (const s of room.members.values()) { s.ready = false; s.wagerPaid = 0; s.player = newPlayer(); }
+  broadcastLobby(room);
+}
+function kickNonReady(room) {
+  for (const [id, s] of [...room.members]) {
+    if (s.isBot || s.ready) continue;
+    room.members.delete(id); s.room = null; s.player = null;   // never charged this round -> no refund
+    try { s.conn.send(JSON.stringify({ t: 'home', credits: s.credits })); } catch (e) {}
+  }
+}
+function startFromLobby(room) {
+  kickNonReady(room);
+  if (humanCount(room) === 0) { killRoom(room); return; }
+  for (const s of room.members.values()) s.ready = false;      // reset for the next lobby
+  startMatch(room);                                            // fills bots, sets pot from paid wagers, counts down
+}
 function updateRoom(room, dt) {
   if (room.phase === 'matchmaking') {
     if (humanCount(room) === 0) { killRoom(room); return; }
@@ -1067,18 +1108,19 @@ function updateRoom(room, dt) {
     }
   } else if (room.phase === 'roundover') {
     room.phaseTimer -= dt;
-    if (room.phaseTimer <= 0) {
-      // Send humans home; the match (and its bots) dissolves.
-      for (const s of room.members.values()) {
-        if (!s.isBot) {
-          const home = { t: 'home', credits: s.credits };
-          if (s.wonStats) { home.wins = s.wonStats.wins; home.rank = s.wonStats.rank; home.won = true; home.payout = s.wonStats.payout; s.wonStats = null; }
-          s.room = null; s.player = null;
-          try { s.conn.send(JSON.stringify(home)); } catch (e) {}
-        }
-      }
-      killRoom(room);
-
+    if (room.phaseTimer <= 0) enterLobby(room);          // stay together in a ready-up lobby
+  } else if (room.phase === 'lobby') {
+    room.lobbyTimer += dt;
+    const humans = [...room.members.values()].filter(x => !x.isBot);
+    if (humans.length === 0) { killRoom(room); return; }
+    const readyN = humans.filter(x => x.ready).length;
+    const allReady = readyN === humans.length;
+    const deadline = room.wager > 0 ? LOBBY_CASH_HOLD : LOBBY_S;
+    if (readyN >= MATCH_SIZE) { startFromLobby(room); return; }              // full house of ready players
+    if (allReady && readyN >= (room.wager > 0 ? 2 : 1) && room.lobbyTimer > 2) { startFromLobby(room); return; }
+    if (room.lobbyTimer >= deadline) {                                       // window up: drop idlers, then go
+      kickNonReady(room);
+      if (humanCount(room) >= 1) startFromLobby(room); else killRoom(room);
     }
   }
 }
@@ -1153,6 +1195,8 @@ setInterval(() => {
     room.tick++;
     if (room.phase === 'matchmaking') {
       if (room.tick % 30 === 0) sendSearch(room);   // ~2x/sec so the countdown ticks live
+    } else if (room.phase === 'lobby') {
+      if (room.tick % 30 === 0) broadcastLobby(room);
     } else if (room.tick % BROADCAST_EVERY === 0) {
       broadcastRoom(room);
     }
@@ -1161,7 +1205,7 @@ setInterval(() => {
 
 // =================== Connections ===================
 ws.attach(server, (conn) => {
-  const s = { id: nextSessionId++, conn, username: null, key: null, room: null, player: null, isBot: false };
+  const s = { id: nextSessionId++, conn, username: null, key: null, room: null, player: null, isBot: false, ready: false };
   allSessions.set(s.id, s);
 
   conn.on('message', async (raw) => {
@@ -1185,6 +1229,14 @@ ws.attach(server, (conn) => {
     if (m.t === 'findMatch') {
       if (s.room) leaveMatch(s, true);                 // leave (and refund) any current queue first
       const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
+      // Prefer joining an existing ready-up lobby of the same wager — you pay on READY, not on join.
+      const lob = [...rooms.values()].find(r => r.phase === 'lobby' && r.wager === wager && humanCount(r) < MATCH_SIZE);
+      if (lob) {
+        s.wagerPaid = 0; s.ready = false; s.room = lob; s.player = newPlayer();
+        lob.members.set(s.id, s);
+        broadcastLobby(lob);
+        return;
+      }
       if (wager > 0) {
         const deb = await debitIfEnough(s.key, wager); // escrow the stake on join (atomic)
         if (!deb.ok) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Not enough credits for that entry fee.' })); } catch (e) {} return; }
@@ -1192,6 +1244,20 @@ ws.attach(server, (conn) => {
         try { conn.send(JSON.stringify({ t: 'credits', credits: deb.credits })); } catch (e) {}
       } else { s.wagerPaid = 0; }
       addToMatch(s, wager);
+    } else if (m.t === 'ready') {
+      // Ready up for the next match. In a cash lobby this charges the entry fee now.
+      const room = s.room;
+      if (!room || room.phase !== 'lobby' || s.ready) return;
+      if (room.wager > 0) {
+        const deb = await debitIfEnough(s.key, room.wager);
+        if (!deb.ok) { try { conn.send(JSON.stringify({ t: 'lobbyError', error: 'Not enough credits to ready up.' })); } catch (e) {} return; }
+        s.credits = deb.credits; s.wagerPaid = room.wager;
+        try { conn.send(JSON.stringify({ t: 'credits', credits: deb.credits })); } catch (e) {}
+      }
+      s.ready = true;
+      broadcastLobby(room);
+    } else if (m.t === 'leaveLobby') {
+      leaveMatch(s, false);                            // refunds if you'd readied (match hasn't started)
     } else if (m.t === 'spectate') {
       // Watch a live game for fun — read-only, never joins as a player.
       stopWatching(s);
