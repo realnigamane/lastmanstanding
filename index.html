@@ -124,6 +124,11 @@
   .livecount { display: flex; align-items: center; font-size: 13px; color: #9fffce; margin: 0 0 10px; }
   .livecount b { color: #fff; margin: 0 2px; }
   .livedot { width: 8px; height: 8px; border-radius: 50%; background: #32ff7e; margin-right: 7px; box-shadow: 0 0 0 0 rgba(50,255,126,.6); animation: livepulse 1.8s infinite; }
+  .livelist { display: flex; flex-direction: column; gap: 8px; }
+  .liveitem { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.05); cursor: pointer; transition: background .12s; }
+  .liveitem:hover { background: rgba(255,255,255,.10); }
+  .liveitem .lmeta { font-size: 12px; opacity: .7; }
+  .liveitem .watch { font-size: 12.5px; font-weight: 700; color: #18dcff; white-space: nowrap; }
   @keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(50,255,126,.6); } 70% { box-shadow: 0 0 0 7px rgba(50,255,126,0); } 100% { box-shadow: 0 0 0 0 rgba(50,255,126,0); } }
 
   /* Deposit / Withdraw converter */
@@ -230,6 +235,12 @@
           <p class="muted" style="margin:7px 0 0;font-size:11px;opacity:.7">Max shown is a full 8-player tournament. Your actual prize is the live prize pool (every entry) minus the 10% fee.</p>
         </div>
         <div id="hmResult" class="muted" style="margin-top:10px;min-height:18px"></div>
+      </div>
+
+      <div class="card">
+        <h2>👀 Watch live games</h2>
+        <p class="sub" style="margin:0 0 10px">Spectate matches happening right now — free, just for fun.</p>
+        <div id="liveList" class="livelist"><div class="muted" style="font-size:13px">Loading live games…</div></div>
       </div>
 
       <div class="card">

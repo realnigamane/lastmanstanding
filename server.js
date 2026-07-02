@@ -562,6 +562,21 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ searching, playing, online }));
     return;
   }
+  // Live games anyone can watch: matches currently in countdown or play.
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/live') {
+    const games = [];
+    for (const r of rooms.values()) {
+      if (r.phase === 'countdown' || r.phase === 'playing') {
+        games.push({ code: r.code, phase: r.phase, players: r.members.size,
+          alive: aliveList(r).length, wager: r.wager, pot: r.pot,
+          roundTime: Math.floor(r.roundTime || 0), watchers: r.watchers ? r.watchers.size : 0 });
+      }
+    }
+    games.sort((a, b) => b.alive - a.alive);
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ games }));
+    return;
+  }
   // Static files: serve ONLY these from the project root. An explicit allowlist
   // means server code, .env, and other files can never be fetched over the web.
   const STATIC = new Set(['index.html', 'client.js', 'admin.html']);
@@ -668,6 +683,7 @@ function createRoom(wager) {
     roundTime: 0, winnerName: null, scrollSpeed: SCROLL_START,
     platforms: [], nextPlatId: 0, lastCenterX: WORLD.w / 2, tick: 0, eliminated: 0,
     hazards: [], nextHazardAt: HAZARD_FIRST,
+    watchers: new Set(),                  // sessions watching this match for fun (not players)
   };
   rooms.set(code, room);
   return room;
@@ -701,7 +717,7 @@ function leaveMatch(s, silent) {
   s.wagerPaid = 0;
   room.members.delete(s.id);
   s.room = null; s.player = null;
-  if (humanCount(room) === 0) { rooms.delete(room.code); }      // no humans -> drop match (and its bots)
+  if (humanCount(room) === 0) { killRoom(room); }      // no humans -> drop match (and its bots)
   else if (room.phase === 'matchmaking') sendSearch(room);
   if (!silent) try { s.conn.send(JSON.stringify({ t: 'home' })); } catch (e) {}
 }
@@ -1007,13 +1023,13 @@ function startMatch(room) {
 }
 function updateRoom(room, dt) {
   if (room.phase === 'matchmaking') {
-    if (humanCount(room) === 0) { rooms.delete(room.code); return; }
+    if (humanCount(room) === 0) { killRoom(room); return; }
     room.waited += dt;
     room.fillTimer -= dt;
     if (room.members.size >= MATCH_SIZE || room.fillTimer <= 0) startMatch(room);
     return;
   }
-  if (humanCount(room) === 0) { rooms.delete(room.code); return; }
+  if (humanCount(room) === 0) { killRoom(room); return; }
 
   if (room.phase === 'countdown') {
     room.phaseTimer -= dt;
@@ -1061,7 +1077,7 @@ function updateRoom(room, dt) {
           try { s.conn.send(JSON.stringify(home)); } catch (e) {}
         }
       }
-      rooms.delete(room.code);
+      killRoom(room);
 
     }
   }
@@ -1108,6 +1124,21 @@ function broadcastRoom(room) {
   if (room.phase === 'matchmaking') { sendSearch(room); return; }
   const msg = roomSnapshot(room);
   for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
+  if (room.watchers && room.watchers.size) for (const w of room.watchers) { try { w.conn.send(msg); } catch (e) {} }
+}
+// Tell anyone watching this match that it's over, then detach them.
+function endWatchers(room) {
+  if (!room.watchers) return;
+  for (const w of room.watchers) { w.watching = null; try { w.conn.send(JSON.stringify({ t: 'specEnd' })); } catch (e) {} }
+  room.watchers.clear();
+}
+function killRoom(room) { endWatchers(room); rooms.delete(room.code); }
+// Detach a session from whatever match it's watching.
+function stopWatching(s) {
+  if (!s || !s.watching) return;
+  const r = rooms.get(s.watching);
+  if (r && r.watchers) r.watchers.delete(s);
+  s.watching = null;
 }
 
 // =================== Game loop ===================
@@ -1161,6 +1192,17 @@ ws.attach(server, (conn) => {
         try { conn.send(JSON.stringify({ t: 'credits', credits: deb.credits })); } catch (e) {}
       } else { s.wagerPaid = 0; }
       addToMatch(s, wager);
+    } else if (m.t === 'spectate') {
+      // Watch a live game for fun — read-only, never joins as a player.
+      stopWatching(s);
+      if (s.room) return;                                  // can't watch while in your own match
+      const r = rooms.get(String(m.code || '').toUpperCase());
+      if (!r || (r.phase !== 'playing' && r.phase !== 'countdown')) { try { conn.send(JSON.stringify({ t: 'specEnd' })); } catch (e) {} return; }
+      r.watchers.add(s); s.watching = r.code;
+      try { conn.send(roomSnapshot(r)); } catch (e) {}
+    } else if (m.t === 'stopSpectate') {
+      stopWatching(s);
+      try { conn.send(JSON.stringify({ t: 'home', credits: s.credits })); } catch (e) {}
     } else if (m.t === 'leaveMatch') {
       leaveMatch(s, false);
     } else if (m.t === 'input') {
@@ -1173,6 +1215,7 @@ ws.attach(server, (conn) => {
   });
 
   conn.on('close', () => {
+    stopWatching(s);
     leaveMatch(s, true);
     allSessions.delete(s.id);
   });

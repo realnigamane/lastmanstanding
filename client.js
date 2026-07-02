@@ -64,6 +64,7 @@
       $('hmWins').textContent = m.wins != null ? m.wins : 0;
       showScreen('home');
       loadHistory();
+      loadLive();
     } else if (m.t === 'authfail') {
       localStorage.removeItem('lms_token');
       showScreen('auth');
@@ -82,10 +83,16 @@
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
-      snap = null; snapBuf = []; clockReady = false; lastFrameT = 0; document.body.classList.remove('spectating'); lastSpec = false;
+      snap = null; snapBuf = []; clockReady = false; lastFrameT = 0; document.body.classList.remove('spectating'); lastSpec = false; isWatching = false;
       $('hmResult').textContent = result;
       showScreen('home');
       loadHistory();
+      loadLive();
+    } else if (m.t === 'specEnd') {
+      isWatching = false; document.body.classList.remove('spectating'); lastSpec = false;
+      snap = null; snapBuf = []; clockReady = false; lastFrameT = 0;
+      showScreen('home');
+      loadLive();
     } else if (m.t === 'credits') {
       myCredits = m.credits; $('hmCredits').textContent = m.credits;
     } else if (m.t === 'matchError') {
@@ -210,6 +217,30 @@
   loadOnline();
   setInterval(loadOnline, 8000);
 
+  // ---------- Watch live games (spectate) ----------
+  let isWatching = false;
+  async function loadLive() {
+    const box = $('liveList'); if (!box) return;
+    try {
+      const d = await (await fetch('/api/live', { cache: 'no-store' })).json();
+      const g = (d && d.games) || [];
+      if (!g.length) { box.innerHTML = '<div class="muted" style="font-size:13px">No live games right now — check back soon.</div>'; return; }
+      box.innerHTML = g.map(x => {
+        const prize = x.wager > 0 ? ('🏆 ' + x.pot + ' prize pool') : 'Practice';
+        const w = x.watchers ? (' · 👀 ' + x.watchers) : '';
+        return '<div class="liveitem" data-code="' + x.code + '"><div><div style="font-weight:600">' + x.alive + ' of ' + x.players + ' still alive</div>' +
+               '<div class="lmeta">' + prize + ' · ' + x.roundTime + 's in' + w + '</div></div><div class="watch">Watch ▶</div></div>';
+      }).join('');
+      box.querySelectorAll('.liveitem').forEach(el => el.onclick = () => startWatch(el.getAttribute('data-code')));
+    } catch (e) {}
+  }
+  function startWatch(code) {
+    if (!sendWS({ t: 'spectate', code: code })) return;
+    isWatching = true;
+  }
+  window.__stopWatch = function () { if (isWatching) { sendWS({ t: 'stopSpectate' }); isWatching = false; } };
+  setInterval(() => { if (curScreen === 'home') loadLive(); }, 10000);
+
   // ---------- Transaction history (deposits + withdrawals, live status) ----------
   let histTimer = null;
   const PENDINGY = new Set(['pending', 'confirming', 'sending', 'review']);
@@ -260,9 +291,11 @@
   // ---------- Searching ----------
   $('btnCancel').onclick = () => { sendWS({ t: 'leaveMatch' }); showScreen('home'); };
   $('btnLeaveMatch').onclick = () => {
-    sendWS({ t: 'leaveMatch' });           // forfeits the stake (server only refunds during matchmaking)
+    if (isWatching) { sendWS({ t: 'stopSpectate' }); isWatching = false; }
+    else sendWS({ t: 'leaveMatch' });      // forfeits the stake (server only refunds during matchmaking)
     document.body.classList.remove('spectating'); lastSpec = false;
     showScreen('home');
+    loadLive();
   };
   function renderSearching(m) {
     const tail = m.wager > 0 ? (' · 🏆 prize pool ' + m.pot) : '';
@@ -337,6 +370,11 @@
   let lastSt = 0, lastSpec = false;
   // Show the "you're out — leave to menu" bar to eliminated players while the match runs on.
   function updateSpectateBar(m) {
+    if (isWatching) {
+      if (!lastSpec) { document.body.classList.add('spectating'); lastSpec = true; }
+      $('specMsg').textContent = '👀 Watching a live game — free to watch.';
+      return;
+    }
     const me = m.players && m.players.find(p => p.id === myUsername);
     const out = !!(me && !me.alive && m.phase === 'playing');
     if (out === lastSpec) return;
