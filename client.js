@@ -599,7 +599,7 @@
         const mine = snap.winner === myUsername;
         center(mine ? '🏆  You win!' : '🏆  ' + snap.winner + '  wins!', mine ? '#9fffce' : '#ffd479', 34, -10);
       } else center('Draw — everyone fell!', '#ff8a8a', 30, -10);
-      center('Back to menu in ' + snap.countdown + '…', '#8b95c9', 16, 30);
+      center('Next match lobby in ' + snap.countdown + '…', '#8b95c9', 16, 30);
     }
   }
   function shade() { ctx.fillStyle = 'rgba(7,9,20,0.55)'; ctx.fillRect(0, 0, W, H); }
