@@ -32,11 +32,11 @@ const PORT = process.env.PORT || 3000;
 // so the password is only ever stored as a salted hash in the database.
 const ADMIN_USER = 'deedotheadmin';
 
-// Rank tiers — a player's rank goes up every 5 wins.
-const RANKS = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Master', 'Grandmaster', 'Legend', 'Mythic', 'Duck God'];
+// Numeric levels — you go up one level every 5 wins (0-4 = Lv1, 5-9 = Lv2, ...). Uncapped.
 function rankFor(wins) {
-  const i = Math.min(RANKS.length - 1, Math.floor((wins || 0) / 5));
-  return { tier: RANKS[i], level: i + 1, toNext: i < RANKS.length - 1 ? (i + 1) * 5 - (wins || 0) : 0 };
+  const w = wins || 0;
+  const level = Math.floor(w / 5) + 1;
+  return { level: level, tier: 'Level ' + level, toNext: 5 - (w % 5) };
 }
 
 // =================== Accounts ===================
@@ -587,7 +587,9 @@ const JUMP_V = -15.2, MAX_FALL = 17;
 
 // Matchmaking
 const MATCH_SIZE = 8;                                       // target players per match
-const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // wait for humans, then fill with bots
+const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // base fill window before bots backfill
+const JOIN_EXTEND_S = 6;    // each time a human joins a waiting lobby, keep it open a few more seconds
+const MATCH_WAIT_MAX = 25;  // ...but never make anyone wait longer than this since the lobby opened
 const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
@@ -662,7 +664,7 @@ function createRoom(wager) {
   const room = {
     code, members: new Map(), wager: wager || 0, pot: 0,
     phase: 'matchmaking',                 // matchmaking | countdown | playing | roundover
-    fillTimer: MATCH_WAIT_S, phaseTimer: 0,
+    fillTimer: MATCH_WAIT_S, waited: 0, phaseTimer: 0,
     roundTime: 0, winnerName: null, scrollSpeed: SCROLL_START,
     platforms: [], nextPlatId: 0, lastCenterX: WORLD.w / 2, tick: 0, eliminated: 0,
     hazards: [], nextHazardAt: HAZARD_FIRST,
@@ -677,6 +679,13 @@ function addToMatch(s, wager) {
   if (!room) room = createRoom(wager);
   s.room = room; s.player = newPlayer();
   room.members.set(s.id, s);
+  // Momentum-based fill window: each human who joins keeps the lobby open a little longer
+  // so real players keep gathering instead of the timer expiring into a bot-heavy match —
+  // but never past MATCH_WAIT_MAX since the lobby opened. Full lobbies (8) still start instantly.
+  if (humanCount(room) < MATCH_SIZE) {
+    const roomLeft = MATCH_WAIT_MAX - room.waited;
+    if (roomLeft > 0) room.fillTimer = Math.max(room.fillTimer, Math.min(JOIN_EXTEND_S, roomLeft));
+  }
   sendSearch(room);
   return room;
 }
@@ -999,6 +1008,7 @@ function startMatch(room) {
 function updateRoom(room, dt) {
   if (room.phase === 'matchmaking') {
     if (humanCount(room) === 0) { rooms.delete(room.code); return; }
+    room.waited += dt;
     room.fillTimer -= dt;
     if (room.members.size >= MATCH_SIZE || room.fillTimer <= 0) startMatch(room);
     return;
