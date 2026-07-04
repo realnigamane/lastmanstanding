@@ -272,6 +272,7 @@ async function fileRpc(fn) {
       flagged_count: arr.filter(u => u.flagged).length, avg_credits: arr.length ? Math.round(s / arr.length) : 0,
       max_credits: arr.reduce((m, u) => Math.max(m, u.credits || 0), 0), total_wins: arr.reduce((x, u) => x + (u.wins || 0), 0), new_users_24h: 0 };
   }
+  if (fn === 'admin_revenue_series') return [];
   return {};
 }
 

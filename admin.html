@@ -212,6 +212,13 @@
     <!-- FINANCE -->
     <section id="s-finance" class="hidden">
       <div class="cards" id="finKpis"></div>
+      <div class="card"><h3>Revenue — last 30 days <span class="r muted" id="revSum"></span></h3>
+        <canvas id="revChart" height="150" style="width:100%"></canvas>
+        <div class="row" style="gap:16px;margin-top:8px;font-size:11.5px">
+          <span class="muted"><b style="color:#2fe08a">■</b> deposits</span>
+          <span class="muted"><b style="color:#ff5c7a">■</b> withdrawals</span>
+          <span class="muted"><b style="color:#ffd479">■</b> fees (est)</span>
+        </div></div>
       <div class="card"><h3>Credit adjuster <span class="r muted">audited</span></h3>
         <div class="row">
           <input id="cUser" placeholder="username" style="width:170px" />
@@ -380,7 +387,7 @@
       if(tab==='dashboard')renderDashboard(m);
       if(tab==='live')await renderLive();
       if(tab==='players')await loadUsers();
-      if(tab==='finance'){renderFinance(m);await loadUsersForConfig();}
+      if(tab==='finance'){renderFinance(m);await loadUsersForConfig();renderRevenue();}
       if(tab==='payouts')await loadWithdrawals();
       if(tab==='transactions')await loadTx();
       if(tab==='settings')await loadSettings();
@@ -553,6 +560,24 @@
       '</div>';
   }
   async function loadUsersForConfig(){if(!cache.users.length)await loadUsers();}
+  async function renderRevenue(){
+    var d=await api('revenue');var s=(d.series&&d.series.length)?d.series:[];
+    var c=$('revChart');if(!c)return;var w=c.clientWidth||600,h=150;c.width=w;c.height=h;var x=c.getContext('2d');
+    x.clearRect(0,0,w,h);
+    if(!s.length){x.fillStyle='#5f6aa0';x.font='12px system-ui';x.fillText('No data yet',8,20);return;}
+    var pad=30,mx=1,tD=0,tW=0,tF=0;
+    s.forEach(function(p){mx=Math.max(mx,p.deposit,p.withdraw,p.fee);tD+=p.deposit;tW+=p.withdraw;tF+=p.fee;});
+    $('revSum').textContent='deposits '+money(tD)+' · withdrawals '+money(tW)+' · fees '+money(tF);
+    var stepX=(w-pad-6)/((s.length-1)||1);
+    // grid
+    x.strokeStyle='#1a2246';x.lineWidth=1;[0,.5,1].forEach(function(g){var gy=h-18-g*(h-34);x.beginPath();x.moveTo(pad,gy);x.lineTo(w,gy);x.stroke();});
+    function line(key,color){x.beginPath();s.forEach(function(p,i){var px=pad+i*stepX,py=h-18-(p[key]/mx)*(h-34);i?x.lineTo(px,py):x.moveTo(px,py);});x.strokeStyle=color;x.lineWidth=2;x.stroke();
+      s.forEach(function(p,i){var px=pad+i*stepX,py=h-18-(p[key]/mx)*(h-34);x.fillStyle=color;x.beginPath();x.arc(px,py,1.6,0,7);x.fill();});}
+    line('deposit','#2fe08a');line('withdraw','#ff5c7a');line('fee','#ffd479');
+    x.fillStyle='#5f6aa0';x.font='10px system-ui';x.textAlign='left';
+    x.fillText(String(mx),3,12);x.fillText('0',3,h-15);
+    x.fillText(s[0].d,pad,h-4);x.textAlign='right';x.fillText(s[s.length-1].d,w-2,h-4);x.textAlign='left';
+  }
 
   // ---------- PAYOUTS ----------
   var wdFilter='all';

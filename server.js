@@ -920,6 +920,7 @@ const server = http.createServer((req, res) => {
           else if (au === '/api/admin/search') r = await adminSearch(data.q);
           else if (au === '/api/admin/user') r = await adminUserProfile(data.username);
           else if (au === '/api/admin/transactions') r = { ok: true, tx: await store.listAllTx(data.limit || 80, data.kind || null) };
+          else if (au === '/api/admin/revenue') r = { ok: true, series: await store.rpc('admin_revenue_series').catch(() => []) };
           else if (au === '/api/admin/credits') { r = await adminAdjustCredits(data.username, data.delta); if (r && r.ok) adminAudit(data.token, 'credits', String(data.username || '').toLowerCase(), { delta: r.delta, reason: data.reason || '' }); }
           else if (au === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
           else if (au === '/api/admin/withdrawal') { r = await adminHandleWithdrawal(data.id, data.action); if (r && r.ok) adminAudit(data.token, 'withdrawal_' + data.action, String(data.id), null); }
