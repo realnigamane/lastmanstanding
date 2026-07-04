@@ -257,8 +257,30 @@ async function adminMetrics() {
     ok: true, finance: fin || {}, economy: eco || {}, live: liveCounts(), peakOnline: peakOnline,
     feeRevenue: feeRevenue, grossDeposits: depCredits + feeRevenue,
     pendingPayouts: { count: pendPayoutCount, amount: pendPayoutAmt },
-    rates: rates, health: serverHealth(), serverTime: new Date().toISOString(),
+    rates: rates, health: serverHealth(), tax: await taxSummary(fin), serverTime: new Date().toISOString(),
   };
+}
+
+// ---- Tax estimator (record-keeping aid, NOT tax advice) ----
+// Basis = ALL deposits received (gross income) minus withdrawals actually paid out (a deduction).
+// Refunded cash-outs are removed from the deduction since that money never left. A US citizen owes
+// US tax on worldwide income even via a zero-tax foreign company — this is a planning estimate only.
+function taxRate() { const r = parseFloat(APP_SETTINGS['tax_rate'] || '0.37'); return (isFinite(r) && r >= 0 && r <= 1) ? r : 0.37; }
+async function taxSummary(finMaybe) {
+  const tax = await store.rpc('admin_tax').catch(() => ({}));
+  const fin = finMaybe || await store.rpc('admin_finance').catch(() => ({}));
+  const depositGross = tax.deposit_gross || 0;
+  const withdrawPaid = tax.withdraw_paid || 0;
+  const refunds = fin.refunded_amt || 0;
+  const deduction = Math.max(0, withdrawPaid - refunds);
+  const netBasis = depositGross - deduction;
+  const rate = taxRate();
+  const estTax = Math.round(Math.max(0, netBasis) * rate);
+  return { depositGross, withdrawPaid, refunds, deduction, netBasis, rate, estTax,
+    depositCount: tax.deposit_count || 0, withdrawCount: tax.withdraw_count || 0, eventCount: tax.event_count || 0 };
+}
+async function adminTax() {
+  return { ok: true, summary: await taxSummary(), events: await store.listTaxEvents(1000).catch(() => []) };
 }
 
 function riskFlags(u, depSum, wdSum) {
@@ -379,7 +401,7 @@ function adminBroadcast(token, text, level) {
   return { ok: true, sent: sent };
 }
 async function adminSetSetting(token, key, value) {
-  const allowed = ['maintenance_mode', 'maintenance_message', 'announcement', 'announcement_active', 'announcement_level'];
+  const allowed = ['maintenance_mode', 'maintenance_message', 'announcement', 'announcement_active', 'announcement_level', 'tax_rate'];
   if (allowed.indexOf(key) < 0) return { error: 'Unknown setting.' };
   await store.setSetting(key, value);
   await loadSettings();
@@ -644,7 +666,7 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   if (!deb.ok) return { error: 'You do not have enough credits.' };
   reflectCredits(key, deb.credits);
   const ref = crypto.randomBytes(12).toString('hex');   // idempotency tag for this withdrawal
-  let payout;
+  let payout, txRate = null, txCrypto = null;
   try {
     // BTCPay's store payout endpoint treats `amount` as the payout method's NATIVE unit (BTC/LTC),
     // NOT dollars. So convert the USD credit amount to crypto with the live rate before sending —
@@ -653,6 +675,7 @@ async function handleWithdrawCreate(token, amount, coin, address) {
     const rate = coin === 'LTC' ? rates.ltc : rates.btc;
     if (!rate || rate <= 0) throw new Error('rate unavailable');
     const cryptoAmt = (amount / rate).toFixed(8);
+    txRate = rate; txCrypto = cryptoAmt;
     payout = await btcpayCreatePayout(coin, address, cryptoAmt, autoApprove, ref);
   } catch (e) {
     console.error('withdraw payout failed:', e.message);
@@ -671,6 +694,8 @@ async function handleWithdrawCreate(token, amount, coin, address) {
     }
   }
   try { await store.addTx({ username_lower: key, kind: 'withdraw', amount, room_code: payout.id }); } catch (e) {}
+  // Tax ledger: record the cash-out (a deduction) with the crypto amount + live market price at this moment.
+  try { await store.addTaxEvent({ kind: 'withdrawal', username_lower: key, coin: coin, crypto_amount: txCrypto ? Number(txCrypto) : null, usd_value: amount, market_price: txRate, ref: String(payout.id) }); } catch (e) {}
   const message = autoApprove
     ? '✓ Withdrawal sent — it pays out automatically to your wallet.'
     : '✓ Withdrawal requested — it\'s being processed and will land in your wallet shortly.';
@@ -696,6 +721,8 @@ async function handleBtcpayWebhook(req, rawBody) {
       const newC = await changeCredits(key, credited);
       reflectCredits(key, newC);
       await store.addTx({ username_lower: key, kind: 'deposit', amount: credited, room_code: ev.invoiceId });
+      // Tax ledger: record the deposit at GROSS value received (income), with a live BTC price reference.
+      try { const rt = await fetchRates(); await store.addTaxEvent({ kind: 'deposit', username_lower: key, coin: null, crypto_amount: null, usd_value: amt, market_price: (rt && rt.btc) || null, ref: String(ev.invoiceId) }); } catch (e) {}
     }
   }
   // Payout was cancelled -> refund the player's escrowed credits (idempotent).
@@ -921,6 +948,7 @@ const server = http.createServer((req, res) => {
           else if (au === '/api/admin/user') r = await adminUserProfile(data.username);
           else if (au === '/api/admin/transactions') r = { ok: true, tx: await store.listAllTx(data.limit || 80, data.kind || null) };
           else if (au === '/api/admin/revenue') r = { ok: true, series: await store.rpc('admin_revenue_series').catch(() => []) };
+          else if (au === '/api/admin/tax') r = await adminTax();
           else if (au === '/api/admin/credits') { r = await adminAdjustCredits(data.username, data.delta); if (r && r.ok) adminAudit(data.token, 'credits', String(data.username || '').toLowerCase(), { delta: r.delta, reason: data.reason || '' }); }
           else if (au === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
           else if (au === '/api/admin/withdrawal') { r = await adminHandleWithdrawal(data.id, data.action); if (r && r.ok) adminAudit(data.token, 'withdrawal_' + data.action, String(data.id), null); }

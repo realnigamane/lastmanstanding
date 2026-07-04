@@ -229,6 +229,16 @@ async function sbRpc(fn) {
   if (!r.ok) throw new Error('Supabase rpc ' + fn + ' ' + r.status + ': ' + (await r.text()));
   return await r.json();
 }
+async function sbListTaxEvents(limit) {
+  const url = SB_URL + '/rest/v1/tax_events?select=*&order=occurred_at.desc&limit=' + (limit || 1000);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listTaxEvents ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbAddTaxEvent(row) {
+  const r = await fetch(SB_URL + '/rest/v1/tax_events', { method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(row) });
+  if (!r.ok) throw new Error('Supabase addTaxEvent ' + r.status + ': ' + (await r.text()));
+}
 // ---- File ----
 async function fileListUsersFull(limit) {
   return Object.values(users).map(u => ({
@@ -259,6 +269,13 @@ async function fileSetSetting(key, value) {
 async function fileListAllTx(limit, kind) {
   let a = txs.slice().reverse(); if (kind) a = a.filter(t => t.kind === kind); return a.slice(0, limit || 100);
 }
+const TAX_FILE = path.join(DATA_DIR, 'tax_events.json');
+let taxEvents = []; try { taxEvents = JSON.parse(fs.readFileSync(TAX_FILE, 'utf8')); } catch (e) { taxEvents = []; }
+async function fileListTaxEvents(limit) { return taxEvents.slice().reverse().slice(0, limit || 1000); }
+async function fileAddTaxEvent(row) {
+  taxEvents.push(Object.assign({ id: taxEvents.length + 1, occurred_at: new Date().toISOString() }, row));
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(TAX_FILE, JSON.stringify(taxEvents, null, 2)); } catch (e) {}
+}
 async function fileRpc(fn) {
   if (fn === 'admin_finance') {
     const g = k => txs.filter(t => t.kind === k); const s = arr => arr.reduce((x, t) => x + (t.amount || 0), 0);
@@ -273,13 +290,20 @@ async function fileRpc(fn) {
       max_credits: arr.reduce((m, u) => Math.max(m, u.credits || 0), 0), total_wins: arr.reduce((x, u) => x + (u.wins || 0), 0), new_users_24h: 0 };
   }
   if (fn === 'admin_revenue_series') return [];
+  if (fn === 'admin_tax') {
+    const g = k => taxEvents.filter(t => t.kind === k); const s = a => a.reduce((x, t) => x + (t.usd_value || 0), 0);
+    return { deposit_gross: s(g('deposit')), withdraw_paid: s(g('withdrawal')), event_count: taxEvents.length,
+      deposit_count: g('deposit').length, withdraw_count: g('withdrawal').length, events_24h: taxEvents.length };
+  }
   return {};
 }
 
 const adminSb = { listUsersFull: sbListUsersFull, searchUsers: sbSearchUsers, setUserFields: sbSetUserFields,
-  addAudit: sbAddAudit, listAudit: sbListAudit, getSettings: sbGetSettings, setSetting: sbSetSetting, listAllTx: sbListAllTx, rpc: sbRpc };
+  addAudit: sbAddAudit, listAudit: sbListAudit, getSettings: sbGetSettings, setSetting: sbSetSetting, listAllTx: sbListAllTx, rpc: sbRpc,
+  listTaxEvents: sbListTaxEvents, addTaxEvent: sbAddTaxEvent };
 const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUsers, setUserFields: fileSetUserFields,
-  addAudit: fileAddAudit, listAudit: fileListAudit, getSettings: fileGetSettings, setSetting: fileSetSetting, listAllTx: fileListAllTx, rpc: fileRpc };
+  addAudit: fileAddAudit, listAudit: fileListAudit, getSettings: fileGetSettings, setSetting: fileSetSetting, listAllTx: fileListAllTx, rpc: fileRpc,
+  listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent };
 
 module.exports = useSupabase
   ? Object.assign({ backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,

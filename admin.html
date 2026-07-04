@@ -139,6 +139,7 @@
       <a data-tab="finance"><span class="ic">💵</span> Finance</a>
       <a data-tab="payouts"><span class="ic">💸</span> Payouts <span id="navPend" class="badge hidden">0</span></a>
       <a data-tab="transactions"><span class="ic">🧾</span> Transactions</a>
+      <a data-tab="tax"><span class="ic">🧮</span> Tax &amp; export</a>
       <a data-tab="moderation"><span class="ic">🛡️</span> Moderation</a>
       <a data-tab="broadcast"><span class="ic">📢</span> Broadcast</a>
       <a data-tab="settings"><span class="ic">⚙️</span> Settings</a>
@@ -262,6 +263,29 @@
         </tr></thead><tbody></tbody></table></div></div>
     </section>
 
+    <!-- TAX -->
+    <section id="s-tax" class="hidden">
+      <div class="card" style="border-left:3px solid var(--warn)">
+        <h3>⚠️ Estimate only — not tax advice</h3>
+        <p class="muted tiny" style="margin:0;line-height:1.6">This tool logs every deposit and withdrawal with the crypto market price at the moment it happened, and estimates a tax figure for planning. It is <b>not</b> tax advice and not a filing number. As a US citizen you owe US tax on worldwide income even through a zero-tax foreign company (rules like GILTI, Subpart F, and self-employment tax apply). Operating expenses, cost basis, deductions, and your real bracket will change the number. Give these records and figures to a licensed CPA.</p>
+      </div>
+      <div class="cards" id="taxKpis"></div>
+      <div class="card"><h3>How this is calculated</h3>
+        <div class="kv" id="taxBreak"></div>
+        <div class="row" style="margin-top:6px">
+          <label class="muted tiny">Effective US tax rate</label>
+          <input id="taxRate" type="number" min="0" max="100" step="0.5" style="width:90px" /> <span class="muted tiny">%</span>
+          <button id="btnTaxRate" class="ghost sm">Save rate</button>
+          <span id="taxRateMsg" class="tiny"></span>
+        </div>
+      </div>
+      <div class="card"><h3>Tax event ledger <span class="r"><button class="ghost sm" id="expTaxCsv">⬇ CSV</button> <button class="sm" id="expTaxPdf">⬇ PDF</button></span></h3>
+        <div class="scroll"><table id="taxTbl"><thead><tr>
+          <th>When</th><th>Type</th><th>User</th><th>USD value</th><th>Coin</th><th>Crypto</th><th>Market price</th>
+        </tr></thead><tbody></tbody></table></div>
+        <p class="muted tiny" style="margin-top:8px">Deposits logged at gross value received (income); withdrawals logged at value paid (deduction). Historical rows before this feature show no market price.</p></div>
+    </section>
+
     <!-- MODERATION -->
     <section id="s-moderation" class="hidden">
       <div class="grid2">
@@ -324,6 +348,8 @@
 <div id="modal" class="hidden"></div>
 <div id="toasts"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script>
 (function(){
   var $=function(id){return document.getElementById(id);};
@@ -368,7 +394,7 @@
   function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden');setTab('dashboard');startTimer();refresh();}
 
   // ---- nav ----
-  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',moderation:'Moderation',broadcast:'Broadcast',settings:'Settings',audit:'Audit log'};
+  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',tax:'Tax & export',moderation:'Moderation',broadcast:'Broadcast',settings:'Settings',audit:'Audit log'};
   function setTab(t){tab=t;$('tabTitle').textContent=titles[t]||t;
     Array.prototype.forEach.call(document.querySelectorAll('#nav a'),function(a){a.classList.toggle('on',a.getAttribute('data-tab')===t);});
     Array.prototype.forEach.call(document.querySelectorAll('main section'),function(s){s.classList.add('hidden');});
@@ -390,6 +416,7 @@
       if(tab==='finance'){renderFinance(m);await loadUsersForConfig();renderRevenue();}
       if(tab==='payouts')await loadWithdrawals();
       if(tab==='transactions')await loadTx();
+      if(tab==='tax')await loadTax();
       if(tab==='settings')await loadSettings();
       if(tab==='audit')await loadAudit();
       $('liveTxt').textContent='updated '+new Date().toLocaleTimeString();
@@ -416,7 +443,8 @@
     html+=kpi('🏦 Credit liability',money(eco.total_credits||0),'','outstanding player balances');
     html+=kpi('💸 Pending payouts',money((m.pendingPayouts&&m.pendingPayouts.amount)||0),'bad',((m.pendingPayouts&&m.pendingPayouts.count)||0)+' awaiting');
     html+=kpi('👥 Accounts',eco.user_count||0,'',(eco.new_users_24h||0)+' new (24h)');
-    html+=kpi('🏆 Total wins',eco.total_wins||0,'','across all players');
+    var tx=m.tax||{};
+    html+=kpi('🧮 Est. tax liability','$'+Number(tx.estTax||0).toLocaleString(),'bad',(Math.round((tx.rate||0)*100))+'% of net · estimate only');
     $('kpis').innerHTML=html;
     $('ccPeak').textContent='peak '+(m.peakOnline||0);
     renderHealth(m.health||{});drawChart();
@@ -578,6 +606,49 @@
     x.fillText(String(mx),3,12);x.fillText('0',3,h-15);
     x.fillText(s[0].d,pad,h-4);x.textAlign='right';x.fillText(s[s.length-1].d,w-2,h-4);x.textAlign='left';
   }
+
+  // ---------- TAX ----------
+  async function loadTax(){
+    var d=await api('tax');var s=d.summary||{};cache.tax_summary=s;cache.tax_events=d.events||[];
+    $('taxKpis').innerHTML=
+      kpi('Deposits (income)',money(s.depositGross),'good',(s.depositCount||0)+' deposits')+
+      kpi('Withdrawals (deduction)','− '+money(s.deduction),'','refunds excluded')+
+      kpi('Net taxable',money(Math.max(0,s.netBasis||0)),(s.netBasis<0?'good':'acc'),(s.netBasis<0?('net loss '+money(-s.netBasis)):'income kept'))+
+      kpi('Est. tax @ '+Math.round((s.rate||0)*100)+'%','$'+Number(s.estTax||0).toLocaleString(),'bad','estimate only');
+    $('taxBreak').innerHTML=
+      '<div class="k">All deposits received</div><div>'+money(s.depositGross)+' <span class="muted tiny">gross income</span></div>'+
+      '<div class="k">Less: withdrawals paid</div><div>− '+money(s.deduction)+' <span class="muted tiny">deduction — money returned to players</span></div>'+
+      '<div class="k">= Net taxable</div><div><b>'+money(s.netBasis)+'</b>'+(s.netBasis<0?' <span class="muted tiny">(a loss — no tax due)</span>':'')+'</div>'+
+      '<div class="k">× effective US rate</div><div>'+Math.round((s.rate||0)*100)+'%</div>'+
+      '<div class="k">= Est. tax owed</div><div><b style="color:var(--bad)">$'+Number(s.estTax||0).toLocaleString()+'</b></div>';
+    if(document.activeElement!==$('taxRate'))$('taxRate').value=Math.round((s.rate||0)*1000)/10;
+    var tb=$('taxTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=cache.tax_events.length?cache.tax_events.map(function(e){
+      return '<tr><td class="muted">'+ftime(e.occurred_at)+'</td><td><span class="pill '+(e.kind==='deposit'?'play':'over')+'">'+esc(e.kind)+'</span></td><td>'+esc(e.username_lower||'—')+'</td><td>'+money(e.usd_value)+'</td><td>'+esc(e.coin||'—')+'</td><td class="tiny mono">'+(e.crypto_amount!=null?e.crypto_amount:'—')+'</td><td class="tiny">'+(e.market_price!=null?('$'+Number(e.market_price).toLocaleString()):'—')+'</td></tr>';
+    }).join(''):'<tr><td colspan="7" class="muted">No tax events yet.</td></tr>';
+  }
+  $('btnTaxRate').onclick=async function(){var v=parseFloat($('taxRate').value);if(!(v>=0&&v<=100)){toast('Enter 0–100','bad');return;}
+    var d=await api('setting',{key:'tax_rate',value:String(v/100)});if(d.error)toast(d.error,'bad');else{toast('Tax rate set to '+v+'%','good');loadTax();refresh();}};
+  $('expTaxCsv').onclick=function(){var h=[['when','type','user','usd_value','coin','crypto_amount','market_price_usd']];(cache.tax_events||[]).forEach(function(e){h.push([e.occurred_at,e.kind,e.username_lower||'',e.usd_value,e.coin||'',e.crypto_amount!=null?e.crypto_amount:'',e.market_price!=null?e.market_price:'']);});dl('tax-events.csv',csv(h));};
+  $('expTaxPdf').onclick=function(){
+    if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF library still loading — try again','bad');return;}
+    var s=cache.tax_summary||{},ev=cache.tax_events||[];
+    var doc=new window.jspdf.jsPDF({unit:'pt',format:'letter'});
+    doc.setFontSize(16);doc.text('Last Duck Standing — Tax Record',40,46);
+    doc.setFontSize(8);doc.setTextColor(150,90,20);
+    doc.text('ESTIMATE ONLY — not tax advice. A US citizen owes US tax on worldwide income even via a zero-tax foreign company. Verify with a licensed CPA.',40,60,{maxWidth:530});
+    doc.setTextColor(120);doc.text('Generated '+new Date().toLocaleString(),40,74);
+    doc.setTextColor(0);doc.setFontSize(11);var y=100;
+    function ln(k,v){doc.setTextColor(90);doc.text(k,40,y);doc.setTextColor(0);doc.text(String(v),320,y);y+=18;}
+    ln('All deposits received (income)','$'+Number(s.depositGross||0).toLocaleString());
+    ln('Less: withdrawals paid (deduction)','- $'+Number(s.deduction||0).toLocaleString());
+    ln('Net taxable revenue','$'+Number(s.netBasis||0).toLocaleString());
+    ln('Effective US rate applied',Math.round((s.rate||0)*100)+'%');
+    ln('Estimated tax liability','$'+Number(s.estTax||0).toLocaleString());
+    var body=ev.map(function(e){return [new Date(e.occurred_at).toLocaleString(),e.kind,e.username_lower||'',(e.usd_value!=null?'$'+e.usd_value:''),e.coin||'',(e.crypto_amount!=null?String(e.crypto_amount):''),(e.market_price!=null?'$'+Number(e.market_price).toLocaleString():'')];});
+    doc.autoTable({startY:y+10,head:[['When','Type','User','USD value','Coin','Crypto','Market price']],body:body,styles:{fontSize:8},headStyles:{fillColor:[40,52,90]}});
+    doc.save('lds-tax-record-'+new Date().toISOString().slice(0,10)+'.pdf');
+  };
 
   // ---------- PAYOUTS ----------
   var wdFilter='all';
