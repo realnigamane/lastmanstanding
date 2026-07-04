@@ -442,11 +442,19 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   reflectCredits(key, deb.credits);
   let payout;
   try {
-    payout = await btcpayCreatePayout(coin, address, amount, autoApprove);
+    // BTCPay's store payout endpoint treats `amount` as the payout method's NATIVE unit (BTC/LTC),
+    // NOT dollars. So convert the USD credit amount to crypto with the live rate before sending —
+    // otherwise "13 credits" would request 13 BTC.
+    const rates = await fetchRates();
+    const rate = coin === 'LTC' ? rates.ltc : rates.btc;
+    if (!rate || rate <= 0) throw new Error('rate unavailable');
+    const cryptoAmt = (amount / rate).toFixed(8);
+    payout = await btcpayCreatePayout(coin, address, cryptoAmt, autoApprove);
   } catch (e) {
     console.error('withdraw payout failed:', e.message);
     const back = await changeCredits(key, amount);    // refund the escrow on failure
     reflectCredits(key, back);
+    if (/rate unavailable/i.test(e.message)) return { error: 'Price feed is momentarily down — try again in a few seconds.' };
     if (/node not available|payment method|not.*sync/i.test(e.message)) return { error: 'Withdrawals are warming up — the payout node is still syncing. Try again later.' };
     if (/destination|address|invalid|bip21/i.test(e.message)) return { error: 'That ' + coin + ' address looks invalid — double-check it.' };
     return { error: 'Could not start the withdrawal right now. Try again shortly.' };
