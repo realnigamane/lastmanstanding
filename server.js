@@ -562,9 +562,31 @@ function geoBlocked(req) {
   if (!c || !GEO_BLOCK.has(c)) return false;
   return !geoBypassed(req);
 }
-const GEO_BLOCK_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+// Turn a 2-letter ISO country code into a human-readable region name. Intl.DisplayNames covers every
+// country automatically, so ANY code added to GEO_BLOCK renders a proper name with no code changes.
+let REGION_NAMES = null;
+try { REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) { REGION_NAMES = null; }
+// Regions that read naturally with a leading "the" (e.g. "the United States").
+const THE_REGIONS = new Set(['US','GB','UK','AE','NL','PH','DO','CZ','BS','GM','CD','CG','CF','KY','VI','GU','UM','MP','TC','VG','CI']);
+// The default block set are all under United States law — used to give US-specific wording.
+const US_FAMILY = new Set(['US','PR','GU','VI','AS','MP','UM']);
+function regionLabel(cc) {
+  if (!cc) return 'your region';
+  let name = null;
+  if (REGION_NAMES) { try { const n = REGION_NAMES.of(cc); if (n && n !== cc) name = n; } catch (e) {} }
+  if (!name) return 'your region (' + cc + ')';
+  return (THE_REGIONS.has(cc) ? 'the ' : '') + name;
+}
+function geoBlockPage(ccRaw) {
+  const cc = String(ccRaw || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
+  const region = regionLabel(cc);
+  const located = cc ? region : 'your current location';
+  const reason = US_FAMILY.has(cc)
+    ? 'Real-money skill competitions like Last Duck Standing are restricted under United States law. Because you appear to be in ' + region + ', we&rsquo;re not able to let you play or wager here.'
+    : 'The laws that apply in ' + region + ' restrict real-money skill competitions, so &mdash; to stay compliant &mdash; we&rsquo;re not able to offer Last Duck Standing there right now.';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Not available in your region</title>
+<title>Not available in ` + region + `</title>
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -602,8 +624,11 @@ const GEO_BLOCK_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-
   @keyframes squash{0%,100%{transform:scaleX(1);opacity:.6}50%{transform:scaleX(.7);opacity:.35}}
 
   .brand{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#8fa6dd;font-weight:700;margin:18px 0 14px}
-  h1{font-size:25px;line-height:1.25;margin:0 0 12px;font-weight:800;letter-spacing:-.01em}
-  p{color:#a9b8e0;line-height:1.6;font-size:15.5px;margin:0 auto;max-width:360px}
+  h1{font-size:25px;line-height:1.25;margin:0 0 14px;font-weight:800;letter-spacing:-.01em}
+  .loc{display:inline-flex;align-items:center;gap:7px;margin:0 0 16px;padding:7px 14px;border-radius:999px;
+    font-size:12.5px;font-weight:600;color:#dfe7ff;background:rgba(255,255,255,.05);border:1px solid rgba(130,160,255,.18)}
+  .loc b{font-weight:700;color:#fff}
+  p{color:#a9b8e0;line-height:1.6;font-size:15.5px;margin:0 auto;max-width:380px}
   .pill{display:inline-flex;align-items:center;gap:8px;margin-top:22px;padding:9px 16px;border-radius:999px;
     font-size:12.5px;font-weight:600;color:#cdd8f5;background:rgba(120,150,255,.10);border:1px solid rgba(130,160,255,.20)}
   .dot{width:8px;height:8px;border-radius:50%;background:#ff5c7a;box-shadow:0 0 0 4px rgba(255,92,122,.18)}
@@ -614,12 +639,14 @@ const GEO_BLOCK_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-
   <main class="card">
     <div class="duck">🦆</div><div class="ripple"></div>
     <div class="brand">Last Duck Standing</div>
-    <h1>Not available in your region</h1>
-    <p>Last Duck Standing isn&rsquo;t available where you are right now. We&rsquo;re sorry to send you off &mdash; thanks for stopping by, and waddle back soon.</p>
-    <div class="pill"><span class="dot"></span> Access restricted for your location</div>
-    <div class="foot">If you believe this is a mistake, please contact support.</div>
+    <h1>Not available in ` + region + `</h1>
+    <div class="loc">📍 Detected location: <b>` + located + `</b></div>
+    <p>` + reason + ` We&rsquo;re sorry to send you off &mdash; thanks for stopping by, and waddle back if the rules ever change.</p>
+    <div class="pill"><span class="dot"></span> Restricted to comply with local law</div>
+    <div class="foot">Location is estimated from your network. If you believe this is a mistake, please contact support.</div>
   </main>
 </body></html>`;
+}
 
 // ===== Origin lockdown: force all real traffic through Cloudflare. =====
 // Without this, someone who discovers the raw Render origin hostname can hit the app directly,
@@ -659,7 +686,7 @@ const server = http.createServer((req, res) => {
   // Geo-fence everything except the payment webhook (which comes from the BTCPay server, not a player).
   if (req.url !== '/api/btcpay/webhook' && geoBlocked(req)) {
     res.writeHead(451, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(GEO_BLOCK_PAGE);
+    res.end(geoBlockPage(req.headers['cf-ipcountry']));
     return;
   }
   if (req.method === 'POST' && req.url.startsWith('/api/')) {
