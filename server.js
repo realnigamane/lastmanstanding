@@ -186,23 +186,13 @@ async function adminHandleWithdrawal(id, action) {
   const row = list.find(w => String(w.id) === String(id));
   if (!row) return { error: 'Request not found.' };
   if (row.status && row.status !== 'pending') return { error: 'Already ' + row.status + '.' };
-  if (action === 'reject') {
-    await store.setWithdrawalStatus(row.id, 'rejected');
-    return { ok: true, id: row.id, status: 'rejected' };
-  }
-  // approve -> deduct the payout amount from the user's balance
-  const key = row.username_lower;
-  const u = await store.getUser(key);
-  let newC = u ? (u.credits || 0) : 0;
-  let deducted = 0;
-  if (u) {
-    deducted = Math.min(newC, row.amount);
-    newC = newC - deducted;
-    await store.updateCredits(key, newC);
-    reflectCredits(key, newC);
-  }
-  await store.setWithdrawalStatus(row.id, 'approved');
-  return { ok: true, id: row.id, status: 'approved', deducted, credits: newC };
+  // Real withdrawals are handled entirely by the automated BTCPay payout flow (handleWithdrawCreate),
+  // which already escrows/debits the credits when the player requests the cash-out. This legacy manual
+  // queue ONLY updates a status label — it must never move credits (doing so would double-debit the
+  // player) and it does not send any crypto. Kept as a harmless no-op to avoid breaking the admin page.
+  const status = action === 'reject' ? 'rejected' : 'approved';
+  await store.setWithdrawalStatus(row.id, status);
+  return { ok: true, id: row.id, status, deducted: 0 };
 }
 
 // =================== BTCPay deposits ===================
@@ -259,17 +249,33 @@ async function handleDepositCreate(token, amount) {
 const WITHDRAW_MIN = 10;     // USD/credits
 const WITHDRAW_MAX = 1000;   // largest single auto-payout
 
-async function btcpayCreatePayout(coin, address, usd, autoApprove) {
+async function btcpayCreatePayout(coin, address, cryptoAmount, autoApprove, ref) {
   const method = coin === 'LTC' ? 'LTC-CHAIN' : 'BTC-CHAIN';
   // approved:true -> the automated sender pays it right away. approved:false -> it sits in
   // BTCPay's "Awaiting approval" queue until the operator approves it (manual review for large cash-outs).
+  // `ref` is a per-request idempotency tag stored in metadata so we can detect a payout that landed
+  // even if the HTTP response was lost — preventing a refund-AND-send double spend.
+  const body = { destination: address, amount: String(cryptoAmount), payoutMethodId: method, approved: autoApprove !== false };
+  if (ref) body.metadata = { withdrawRef: ref };
   const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'token ' + BTCPAY_KEY },
-    body: JSON.stringify({ destination: address, amount: String(usd), payoutMethodId: method, approved: autoApprove !== false }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error('btcpay createPayout ' + r.status + ': ' + (await r.text()));
   return await r.json();
+}
+// Did a payout with this idempotency ref actually get created? (Used after an ambiguous network failure.)
+async function btcpayFindPayoutByRef(ref) {
+  if (!ref) return null;
+  try {
+    const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts?includeCancelled=true', {
+      headers: { 'Authorization': 'token ' + BTCPAY_KEY },
+    });
+    if (!r.ok) return null;
+    const list = await r.json();
+    return (Array.isArray(list) ? list : []).find(p => p.metadata && p.metadata.withdrawRef === ref) || null;
+  } catch (e) { return null; }
 }
 async function btcpayGetPayout(payoutId) {
   const r = await fetch(BTCPAY_URL + '/api/v1/stores/' + BTCPAY_STORE + '/payouts/' + payoutId, {
@@ -440,6 +446,7 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   const deb = await debitIfEnough(key, amount);
   if (!deb.ok) return { error: 'You do not have enough credits.' };
   reflectCredits(key, deb.credits);
+  const ref = crypto.randomBytes(12).toString('hex');   // idempotency tag for this withdrawal
   let payout;
   try {
     // BTCPay's store payout endpoint treats `amount` as the payout method's NATIVE unit (BTC/LTC),
@@ -449,15 +456,22 @@ async function handleWithdrawCreate(token, amount, coin, address) {
     const rate = coin === 'LTC' ? rates.ltc : rates.btc;
     if (!rate || rate <= 0) throw new Error('rate unavailable');
     const cryptoAmt = (amount / rate).toFixed(8);
-    payout = await btcpayCreatePayout(coin, address, cryptoAmt, autoApprove);
+    payout = await btcpayCreatePayout(coin, address, cryptoAmt, autoApprove, ref);
   } catch (e) {
     console.error('withdraw payout failed:', e.message);
-    const back = await changeCredits(key, amount);    // refund the escrow on failure
-    reflectCredits(key, back);
-    if (/rate unavailable/i.test(e.message)) return { error: 'Price feed is momentarily down — try again in a few seconds.' };
-    if (/node not available|payment method|not.*sync/i.test(e.message)) return { error: 'Withdrawals are warming up — the payout node is still syncing. Try again later.' };
-    if (/destination|address|invalid|bip21/i.test(e.message)) return { error: 'That ' + coin + ' address looks invalid — double-check it.' };
-    return { error: 'Could not start the withdrawal right now. Try again shortly.' };
+    // The create may have SUCCEEDED but the response was lost (network blip). Before refunding, check
+    // whether a payout with our ref actually landed — if so, keep the escrow and record it, so we never
+    // refund the credits AND send the crypto.
+    const landed = await btcpayFindPayoutByRef(ref);
+    if (landed && landed.id) { payout = landed; }
+    else {
+      const back = await changeCredits(key, amount);    // truly failed -> refund the escrow
+      reflectCredits(key, back);
+      if (/rate unavailable/i.test(e.message)) return { error: 'Price feed is momentarily down — try again in a few seconds.' };
+      if (/node not available|payment method|not.*sync/i.test(e.message)) return { error: 'Withdrawals are warming up — the payout node is still syncing. Try again later.' };
+      if (/destination|address|invalid|bip21/i.test(e.message)) return { error: 'That ' + coin + ' address looks invalid — double-check it.' };
+      return { error: 'Could not start the withdrawal right now. Try again shortly.' };
+    }
   }
   try { await store.addTx({ username_lower: key, kind: 'withdraw', amount, room_code: payout.id }); } catch (e) {}
   const message = autoApprove
