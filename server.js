@@ -562,16 +562,96 @@ function geoBlocked(req) {
   if (!c || !GEO_BLOCK.has(c)) return false;
   return !geoBypassed(req);
 }
-const GEO_BLOCK_PAGE = '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
-  '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Not available in your region</title>' +
-  '<style>html,body{margin:0;height:100%}body{display:flex;align-items:center;justify-content:center;' +
-  'background:#0b1020;color:#e6ecff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
-  '.b{max-width:440px;text-align:center;padding:32px}.b h1{font-size:22px;margin:0 0 10px}' +
-  '.b p{color:#9fb0d8;line-height:1.5;font-size:15px;margin:0}</style></head>' +
-  '<body><div class="b"><h1>🦆 Not available in your region</h1>' +
-  '<p>Last Duck Standing isn’t available where you are. Thanks for stopping by.</p></div></body></html>';
+const GEO_BLOCK_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Not available in your region</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    display:flex;align-items:center;justify-content:center;min-height:100%;padding:24px;
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    color:#eaf0ff;overflow:hidden;
+    background:radial-gradient(1200px 600px at 50% -10%,#1c2b57 0%,transparent 60%),
+               radial-gradient(900px 500px at 85% 110%,#3a1f5c 0%,transparent 55%),
+               linear-gradient(160deg,#0a0f22 0%,#0b1128 55%,#0a0f1f 100%);
+  }
+  /* soft drifting glow blobs */
+  .blob{position:fixed;border-radius:50%;filter:blur(70px);opacity:.35;z-index:0;pointer-events:none}
+  .blob.a{width:340px;height:340px;left:-90px;top:-70px;background:#2b6fff;animation:float1 14s ease-in-out infinite}
+  .blob.b{width:300px;height:300px;right:-80px;bottom:-70px;background:#a24bff;animation:float2 17s ease-in-out infinite}
+  @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,26px)}}
+  @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-26px,-30px)}}
+
+  .card{
+    position:relative;z-index:1;width:100%;max-width:460px;text-align:center;
+    padding:44px 34px 34px;border-radius:24px;
+    background:rgba(19,26,54,.72);
+    border:1px solid rgba(130,160,255,.16);
+    box-shadow:0 30px 80px -30px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.05);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    animation:rise .7s cubic-bezier(.2,.8,.2,1) both;
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+  .duck{font-size:76px;line-height:1;display:inline-block;filter:drop-shadow(0 10px 18px rgba(0,0,0,.45));animation:bob 3.2s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0) rotate(-3deg)}50%{transform:translateY(-10px) rotate(3deg)}}
+  /* little water ripple under the duck */
+  .ripple{width:120px;height:12px;margin:6px auto 0;border-radius:50%;
+    background:radial-gradient(closest-side,rgba(120,160,255,.35),transparent);animation:squash 3.2s ease-in-out infinite}
+  @keyframes squash{0%,100%{transform:scaleX(1);opacity:.6}50%{transform:scaleX(.7);opacity:.35}}
+
+  .brand{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#8fa6dd;font-weight:700;margin:18px 0 14px}
+  h1{font-size:25px;line-height:1.25;margin:0 0 12px;font-weight:800;letter-spacing:-.01em}
+  p{color:#a9b8e0;line-height:1.6;font-size:15.5px;margin:0 auto;max-width:360px}
+  .pill{display:inline-flex;align-items:center;gap:8px;margin-top:22px;padding:9px 16px;border-radius:999px;
+    font-size:12.5px;font-weight:600;color:#cdd8f5;background:rgba(120,150,255,.10);border:1px solid rgba(130,160,255,.20)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#ff5c7a;box-shadow:0 0 0 4px rgba(255,92,122,.18)}
+  .foot{margin-top:26px;font-size:12px;color:#6f80ab}
+</style></head>
+<body>
+  <div class="blob a"></div><div class="blob b"></div>
+  <main class="card">
+    <div class="duck">🦆</div><div class="ripple"></div>
+    <div class="brand">Last Duck Standing</div>
+    <h1>Not available in your region</h1>
+    <p>Last Duck Standing isn&rsquo;t available where you are right now. We&rsquo;re sorry to send you off &mdash; thanks for stopping by, and waddle back soon.</p>
+    <div class="pill"><span class="dot"></span> Access restricted for your location</div>
+    <div class="foot">If you believe this is a mistake, please contact support.</div>
+  </main>
+</body></html>`;
+
+// ===== Origin lockdown: force all real traffic through Cloudflare. =====
+// Without this, someone who discovers the raw Render origin hostname can hit the app directly,
+// which skips the Cloudflare edge geo rule AND arrives with no CF-IPCountry header (so the app-level
+// geo check sees an empty country and lets it through) — a hole straight past both geo layers.
+// A Cloudflare Transform Rule injects X-Origin-Secret on every proxied request; direct-to-origin
+// hits won't have it, so we reject them. Off by default (ORIGIN_LOCK) so we can deploy the code,
+// confirm Cloudflare is injecting the header, THEN flip enforcement on with no risk of self-lockout.
+// /healthz (Render's internal health check, which does NOT go through Cloudflare) and the BTCPay
+// webhook (from the BTCPay server, also not via Cloudflare) are always exempt.
+const ORIGIN_LOCK = /^(1|true|on|yes)$/i.test(String(process.env.ORIGIN_LOCK || ''));
+const ORIGIN_SECRET = process.env.ORIGIN_SECRET || '';
+function originAllowed(req) {
+  if (!ORIGIN_LOCK || !ORIGIN_SECRET) return true;
+  const u = req.url || '';
+  if (u === '/healthz' || u === '/api/btcpay/webhook') return true;
+  return String(req.headers['x-origin-secret'] || '') === ORIGIN_SECRET;
+}
 
 const server = http.createServer((req, res) => {
+  // Lightweight health check for Render (bypasses geo + origin lock so the platform never sees the app as down).
+  if (req.url === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end('ok');
+    return;
+  }
+  // Reject any request that didn't come through Cloudflare (missing the injected secret header).
+  if (!originAllowed(req)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end('Forbidden');
+    return;
+  }
   // Owner bypass: hitting any URL with ?geo=SECRET remembers you via a 1-year cookie.
   if (GEO_BYPASS && (req.url || '').indexOf('geo=' + GEO_BYPASS) >= 0) {
     res.setHeader('Set-Cookie', 'geo=' + GEO_BYPASS + '; Max-Age=31536000; Path=/; SameSite=Lax');
