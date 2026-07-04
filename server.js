@@ -251,7 +251,9 @@ async function handleDepositCreate(token, amount) {
     return { error: 'Could not start the deposit right now. Please try again shortly.' };
   }
   try { await store.addTx({ username_lower: key, kind: 'deposit_pending', amount, room_code: inv.id }); } catch (e) {}
-  return { ok: true, checkoutLink: inv.checkoutLink, invoiceId: inv.id };
+  let payments = [];
+  try { payments = parseInvoicePayments(await btcpayGetInvoicePMs(inv.id)); } catch (e) {}
+  return { ok: true, checkoutLink: inv.checkoutLink, invoiceId: inv.id, payments };
 }
 // ---- Withdrawals (automated payouts) ----
 const WITHDRAW_MIN = 10;     // USD/credits
@@ -315,6 +317,36 @@ async function txConfirmations(coin, txid) {
   } catch (e) { return null; }
 }
 function pmCoin(pm) { return /LTC/i.test(pm.paymentMethodId || pm.paymentMethod || pm.cryptoCode || '') ? 'LTC' : 'BTC'; }
+// Clean, client-ready payment details for an invoice's on-chain methods (address, amount, BIP21 URI).
+function parseInvoicePayments(pms) {
+  const out = [];
+  for (const pm of (pms || [])) {
+    const coin = pmCoin(pm);
+    const address = pm.destination || pm.address || '';
+    const amount = String(pm.due != null && pm.due !== '' ? pm.due : (pm.amount != null ? pm.amount : (pm.totalDue || '')));
+    if (!address) continue;
+    const uri = pm.paymentLink || ((coin === 'LTC' ? 'litecoin:' : 'bitcoin:') + address + (amount ? ('?amount=' + amount) : ''));
+    out.push({ coin, address, amount, uri, rate: pm.rate != null ? String(pm.rate) : null });
+  }
+  return out;
+}
+async function handleDepositDetails(token, invoiceId) {
+  const key = sessionKey(token);
+  if (!key) return { error: 'Please log in again.' };
+  if (!btcpayConfigured()) return { error: 'Deposits are not enabled yet.' };
+  invoiceId = String(invoiceId || '');
+  try {
+    const rows = await store.listTxByUser(key);
+    const owns = (rows || []).some(r => r.kind === 'deposit_pending' && String(r.room_code) === invoiceId);
+    if (!owns) return { error: 'Invoice not found.' };
+    const inv = await btcpayGetInvoice(invoiceId);
+    const st = String(inv.status || '').toLowerCase();
+    const payments = parseInvoicePayments(await btcpayGetInvoicePMs(invoiceId));
+    return { ok: true, invoiceId, status: st, expired: (st === 'expired' || st === 'invalid'),
+             settled: (st === 'settled' || st === 'complete' || st === 'confirmed'),
+             checkoutLink: inv.checkoutLink, payments };
+  } catch (e) { return { error: 'Could not load that invoice.' }; }
+}
 function firstTxid(payments) {
   for (const p of (payments || [])) {
     const raw = p.id || p.transactionId || p.txId || p.destination || '';
@@ -362,7 +394,7 @@ async function handleHistory(token) {
         }
       } catch (e) {}
     }
-    deposits.push({ amount: r.amount, date: r.created_at, status, confs, target: CONFIRMS_TARGET, coin });
+    deposits.push({ amount: r.amount, date: r.created_at, status, confs, target: CONFIRMS_TARGET, coin, invoiceId: r.room_code });
   }
 
   const withdrawals = [];
@@ -525,6 +557,7 @@ const server = http.createServer((req, res) => {
         if (req.url === '/api/register') result = await registerUser(data.username, data.password);
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
         else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
+        else if (req.url === '/api/deposit/details') result = await handleDepositDetails(data.token, data.invoice);
         else if (req.url === '/api/withdraw/create') result = await handleWithdrawCreate(data.token, data.amount, data.coin, data.address);
         else if (req.url === '/api/history') result = await handleHistory(data.token);
         else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }

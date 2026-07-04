@@ -155,11 +155,80 @@
       const r = await fetch('/api/deposit/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken, amount: amt }) });
       const d = await r.json();
       if (d.error) { $('depMsg').textContent = d.error; return; }
-      $('depMsg').textContent = 'Opening payment window — your balance updates once the payment confirms on-chain.';
-      window.open(d.checkoutLink, '_blank');
-      setTimeout(loadHistory, 2500);
+      $('depMsg').textContent = '';
+      if (!showPayPanel(d.payments, d.invoiceId)) {
+        // No inline address returned — send them to the hosted checkout IN THE SAME TAB (no blocked popup)
+        if (d.checkoutLink) location.href = d.checkoutLink;
+        else $('depMsg').textContent = 'Deposit created — see Pending deposits below to pay.';
+      }
+      loadHistory();
     } catch (e) { $('depMsg').textContent = 'Could not start deposit. Try again.'; }
   };
+
+  // ---------- Native inline crypto payment panel (no popups / redirects) ----------
+  let payTimer = null;
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(t).catch(() => fallbackCopy(t)); }
+    else fallbackCopy(t);
+  }
+  function fallbackCopy(t) {
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select(); try { document.execCommand('copy'); } catch (e) {} document.body.removeChild(ta);
+  }
+  function renderPay(payments, invoiceId, coin, note) {
+    const panel = $('payPanel');
+    const p = payments.find(x => x.coin === coin) || payments[0];
+    const coinName = p.coin === 'LTC' ? 'Litecoin' : 'Bitcoin';
+    const toggle = payments.length > 1
+      ? '<div class="pp-coins">' + payments.map(x => '<button data-c="' + x.coin + '" class="' + (x.coin === coin ? 'sel' : '') + '">' + (x.coin === 'LTC' ? 'Litecoin' : 'Bitcoin') + '</button>').join('') + '</div>'
+      : '';
+    panel.innerHTML =
+      toggle +
+      '<div class="pp-amt">Send exactly ' + p.amount + ' ' + p.coin + '<small>to your ' + coinName + ' address below</small></div>' +
+      '<div class="pp-qr" id="ppQr"></div>' +
+      '<div class="pp-addr"><code>' + p.address + '</code><button class="pp-copy" id="ppCopy">Copy</button></div>' +
+      '<a class="pp-open" href="' + p.uri + '">📲 Open in wallet app</a>' +
+      '<div class="pp-status" id="ppStatus">' + (note || 'Waiting for payment… your balance updates automatically once it confirms on-chain.') + '</div>' +
+      '<button class="pp-close" id="ppClose">Hide</button>';
+    const qd = $('ppQr'); qd.innerHTML = '';
+    if (window.QRCode) { try { new QRCode(qd, { text: p.uri, width: 168, height: 168, correctLevel: QRCode.CorrectLevel.M }); } catch (e) { qd.style.display = 'none'; } }
+    else qd.style.display = 'none';
+    $('ppCopy').onclick = () => { copyText(p.address); const b = $('ppCopy'); b.textContent = 'Copied ✓'; b.classList.add('ok'); setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('ok'); }, 1500); };
+    $('ppClose').onclick = () => { panel.style.display = 'none'; clearInterval(payTimer); };
+    panel.querySelectorAll('.pp-coins button').forEach(b => b.onclick = () => renderPay(payments, invoiceId, b.getAttribute('data-c'), note));
+  }
+  function showPayPanel(payments, invoiceId, note) {
+    if (!payments || !payments.length) return false;
+    let coin = depCoin;
+    if (!payments.some(x => x.coin === coin)) coin = payments[0].coin;
+    renderPay(payments, invoiceId, coin, note);
+    const panel = $('payPanel');
+    panel.style.display = 'block';
+    try { panel.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    clearInterval(payTimer);
+    payTimer = setInterval(() => pollPay(invoiceId), 12000);
+    return true;
+  }
+  async function pollPay(invoiceId) {
+    try {
+      const d = await (await fetch('/api/deposit/details', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken, invoice: invoiceId }) })).json();
+      const st = $('ppStatus');
+      if (st && d) {
+        if (d.settled) { st.textContent = '✓ Payment confirmed — credits added!'; clearInterval(payTimer); }
+        else if (d.expired) { st.textContent = 'This invoice expired — start a new deposit.'; clearInterval(payTimer); }
+      }
+    } catch (e) {}
+    loadHistory();
+  }
+  function openPendingInvoice(invoiceId) {
+    $('depMsg').textContent = 'Loading your invoice…';
+    fetch('/api/deposit/details', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken, invoice: invoiceId }) })
+      .then(r => r.json()).then(d => {
+        $('depMsg').textContent = '';
+        if (d && d.ok) { if (!showPayPanel(d.payments, invoiceId, d.settled ? '✓ Payment confirmed — credits added!' : null) && d.checkoutLink) location.href = d.checkoutLink; }
+        else $('depMsg').textContent = (d && d.error) || 'Could not load invoice.';
+      }).catch(() => { $('depMsg').textContent = 'Could not load invoice.'; });
+  }
   $('btnWithdraw').onclick = async () => {
     const amt = parseInt($('wdAmt').value, 10);
     const coin = wdCoin;
@@ -271,8 +340,11 @@
     el.innerHTML = items.map((it) => {
       let when = '';
       if (it.date) { const d = new Date(it.date); if (!isNaN(d)) when = d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-      return '<div class="histrow"><div><div class="ha">' + sign + it.amount + ' cr</div><div class="hd">' + when + '</div></div>' + histBadge(it) + '</div>';
+      const canView = kind === 'deposits' && it.invoiceId && (it.status === 'pending' || it.status === 'confirming');
+      const view = canView ? '<span class="hview" data-inv="' + it.invoiceId + '">View / Pay ▸</span>' : '';
+      return '<div class="histrow"><div><div class="ha">' + sign + it.amount + ' cr</div><div class="hd">' + when + '</div></div><div style="display:flex;align-items:center;gap:4px">' + histBadge(it) + view + '</div></div>';
     }).join('');
+    if (kind === 'deposits') el.querySelectorAll('.hview').forEach(b => b.onclick = () => openPendingInvoice(b.getAttribute('data-inv')));
   }
   async function loadHistory() {
     if (!authToken || curScreen !== 'home') return;

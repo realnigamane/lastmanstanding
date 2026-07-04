@@ -124,6 +124,22 @@
   .livecount { display: flex; align-items: center; font-size: 13px; color: #9fffce; margin: 0 0 10px; }
   .livecount b { color: #fff; margin: 0 2px; }
   .livedot { width: 8px; height: 8px; border-radius: 50%; background: #32ff7e; margin-right: 7px; box-shadow: 0 0 0 0 rgba(50,255,126,.6); animation: livepulse 1.8s infinite; }
+  .paypanel { margin-top: 14px; padding: 14px; border-radius: 12px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08); text-align: center; }
+  .paypanel .pp-amt { font-size: 15px; font-weight: 700; color: #ffd479; }
+  .paypanel .pp-amt small { display:block; font-weight:500; font-size:11.5px; color:#8b95c9; margin-top:2px; }
+  .paypanel .pp-qr { display: inline-block; background:#fff; padding: 9px; border-radius: 10px; margin: 12px auto; line-height:0; min-height: 20px; }
+  .paypanel .pp-qr img, .paypanel .pp-qr canvas { display:block; }
+  .paypanel .pp-addr { display:flex; align-items:center; gap:8px; background: rgba(0,0,0,.28); border-radius: 9px; padding: 9px 11px; margin: 8px 0; }
+  .paypanel .pp-addr code { font-size: 12px; word-break: break-all; text-align:left; flex:1; color:#cfe6ff; }
+  .paypanel .pp-copy { flex:none; font-size:12px; font-weight:700; padding:6px 10px; border-radius:7px; background:#2b3566; color:#cfe0ff; cursor:pointer; border:none; }
+  .paypanel .pp-copy.ok { background:#1f6b3a; color:#c9ffd8; }
+  .paypanel .pp-open { display:block; text-align:center; text-decoration:none; font-weight:700; padding:11px; border-radius:10px; background:linear-gradient(90deg,#4be3ff,#7d5fff); color:#04121a; margin:8px 0 4px; }
+  .paypanel .pp-status { font-size:12.5px; color:#9fffce; margin-top:8px; min-height:16px; }
+  .paypanel .pp-coins { display:flex; gap:8px; justify-content:center; margin-bottom:10px; }
+  .paypanel .pp-coins button { font-size:12.5px; padding:6px 14px; border-radius:8px; border:1px solid rgba(255,255,255,.14); background:transparent; color:#aeb6d8; cursor:pointer; }
+  .paypanel .pp-coins button.sel { background:#2b3566; color:#fff; border-color:transparent; }
+  .paypanel .pp-close { background:none; border:none; color:#8b95c9; font-size:12.5px; cursor:pointer; margin-top:6px; text-decoration:underline; }
+  .histrow .hview { font-size:11.5px; font-weight:700; color:#4be3ff; cursor:pointer; margin-left:8px; white-space:nowrap; }
   .livelist { display: flex; flex-direction: column; gap: 8px; }
   .liveitem { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.05); cursor: pointer; transition: background .12s; }
   .liveitem:hover { background: rgba(255,255,255,.10); }
@@ -267,6 +283,7 @@
         <div class="convrate" id="depRate">Live price loading…</div>
         <button id="btnDeposit" class="wide">Deposit</button>
         <div id="depMsg" class="muted" style="margin-top:8px;min-height:16px"></div>
+        <div id="payPanel" class="paypanel" style="display:none"></div>
       </div>
 
       <div class="card">
@@ -356,6 +373,7 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="client.js"></script>
 </body>
 </html>
