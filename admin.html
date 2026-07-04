@@ -3,301 +3,654 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Last Duck Standing — Admin</title>
+<title>Last Duck Standing — Operations</title>
 <style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%;
-    background: radial-gradient(1200px 800px at 50% -10%, #16203f, #0b0e1a 60%);
-    color: #e8ecff; font-family: 'Segoe UI', system-ui, sans-serif; }
-  a { color: #6fd3ff; }
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 18px 60px; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
-  h1 .tm { color: #ffd479; }
-  h2 { font-size: 15px; margin: 0 0 10px; color: #cdd6ff; text-transform: uppercase; letter-spacing: 1px; }
-  .muted { color: #8b95c9; font-size: 12.5px; }
-  .card { background: #141a31; border: 1px solid #2a3358; border-radius: 14px; padding: 18px 18px; margin-bottom: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.4); }
-  input { padding: 10px 12px; font-size: 14px; border-radius: 9px; border: 1px solid #34406e; background: #0e1326; color: #fff; outline: none; }
-  input:focus { border-color: #5a6cff; }
-  button { cursor: pointer; border: none; border-radius: 9px; font-weight: 600; font-size: 13.5px; padding: 10px 14px; color: #06122b; background: linear-gradient(90deg, #4be3ff, #7d5fff); }
-  button:hover { filter: brightness(1.08); }
-  button.ghost { background: #1d264a; color: #cdd6ff; border: 1px solid #34406e; }
-  button.good { background: linear-gradient(90deg, #32ff7e, #14c46a); }
-  button.bad { background: linear-gradient(90deg, #ff7a7a, #ff4d4d); color: #2a0606; }
-  button.sm { padding: 6px 10px; font-size: 12px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #222a4d; }
-  th { color: #8b95c9; font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .6px; }
-  tr:last-child td { border-bottom: none; }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-  .pill.play { background: #14351f; color: #6bff9e; }
-  .pill.wait { background: #2a2a14; color: #ffe08a; }
-  .pill.over { background: #2a1430; color: #ff9fe0; }
-  .pill.cash { background: #2a2410; color: #ffd479; }
-  .pill.free { background: #15233a; color: #8fd0ff; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-  .stat { flex: 1; min-width: 130px; background: #141a31; border: 1px solid #2a3358; border-radius: 12px; padding: 12px 14px; }
-  .stat .n { font-size: 26px; font-weight: 800; color: #4be3ff; }
-  .stat .l { font-size: 12px; color: #8b95c9; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .err { color: #ff8a8a; font-size: 13px; min-height: 18px; }
-  .ok { color: #9fffce; font-size: 13px; min-height: 18px; }
-  .players { color: #aab6ee; font-size: 12px; }
-  .bot { color: #6b76b0; }
-  .scroll { overflow-x: auto; }
+  :root{
+    --bg:#080c18; --panel:#111834; --panel2:#0d1330; --line:#242e58; --line2:#1a2246;
+    --txt:#e8ecff; --mut:#8b95c9; --mut2:#5f6aa0; --acc:#5a8bff; --acc2:#7d5fff;
+    --good:#2fe08a; --bad:#ff5c7a; --warn:#ffc25a; --cash:#ffd479;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:
+    radial-gradient(1200px 700px at 80% -10%,#141d3f 0,transparent 55%),
+    radial-gradient(900px 600px at 0% 100%,#1a1340 0,transparent 55%),var(--bg);
+    color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  ::-webkit-scrollbar{height:9px;width:9px}::-webkit-scrollbar-thumb{background:#2a3358;border-radius:8px}
+  input,select,textarea{padding:9px 11px;font-size:13.5px;border-radius:9px;border:1px solid #34406e;background:#0c1228;color:#fff;outline:none;font-family:inherit}
+  input:focus,select,textarea:focus{border-color:var(--acc)}
+  textarea{resize:vertical;min-height:60px;width:100%}
+  button{cursor:pointer;border:none;border-radius:9px;font-weight:600;font-size:13px;padding:9px 14px;color:#06122b;background:linear-gradient(90deg,#4be3ff,#7d5fff);transition:filter .12s,transform .05s}
+  button:hover{filter:brightness(1.09)} button:active{transform:translateY(1px)}
+  button.ghost{background:#182148;color:#cdd6ff;border:1px solid #33406e} button.ghost:hover{background:#1e2856}
+  button.good{background:linear-gradient(90deg,#32ff9e,#12c47a);color:#032013}
+  button.bad{background:linear-gradient(90deg,#ff8a8a,#ff4d6a);color:#2a0610}
+  button.warn{background:linear-gradient(90deg,#ffd479,#f5a623);color:#2a1c02}
+  button.sm{padding:6px 10px;font-size:12px;border-radius:8px}
+  button:disabled{opacity:.45;cursor:not-allowed;filter:none}
+  .hidden{display:none !important}
+  .muted{color:var(--mut)} .tiny{font-size:11.5px}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+
   /* login */
-  #login { max-width: 380px; margin: 8vh auto 0; }
-  #login input { width: 100%; margin-bottom: 10px; }
-  .hidden { display: none !important; }
-  .dot { font-size: 11px; }
+  #login{max-width:390px;margin:9vh auto 0;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  #login h1{font-size:21px;margin:0 0 4px}
+  #login input{width:100%;margin-bottom:10px}
+  .tm{color:var(--cash)}
+  .err{color:#ff9a9a;font-size:13px;min-height:18px}
+
+  /* shell */
+  .shell{display:grid;grid-template-columns:210px 1fr;min-height:100vh}
+  .side{background:linear-gradient(180deg,#0c1230,#0a0f24);border-right:1px solid var(--line2);padding:16px 12px;position:sticky;top:0;height:100vh;overflow:auto}
+  .brand{font-size:16px;font-weight:800;padding:6px 8px 14px;letter-spacing:.3px}
+  .nav{display:flex;flex-direction:column;gap:3px}
+  .nav a{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:10px;color:#b9c2ee;font-weight:600;font-size:13.5px;cursor:pointer}
+  .nav a .ic{width:18px;text-align:center;opacity:.9}
+  .nav a:hover{background:#161e42;text-decoration:none}
+  .nav a.on{background:#1b2650;color:#fff;box-shadow:inset 3px 0 0 var(--acc)}
+  .nav .badge{margin-left:auto;background:#2a1430;color:#ff9fe0;border-radius:999px;font-size:10.5px;padding:1px 7px;font-weight:800}
+  .side .foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--line2);color:var(--mut2);font-size:11px}
+
+  .main{padding:0 22px 60px;max-width:1180px}
+  .top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:12px;padding:14px 0 12px;margin-bottom:6px;
+    background:linear-gradient(180deg,var(--bg) 70%,transparent);flex-wrap:wrap}
+  .top h2{font-size:18px;margin:0;flex:0 0 auto}
+  .live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut)}
+  .live .d{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px rgba(47,224,138,.15);animation:pulse 2s infinite}
+  @keyframes pulse{50%{opacity:.4}}
+  .grow{flex:1 1 auto}
+  .search{position:relative}
+  .search input{width:210px;padding-left:30px}
+  .search .mag{position:absolute;left:10px;top:8px;color:var(--mut2)}
+  .searchpop{position:absolute;top:38px;left:0;width:290px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);z-index:80;max-height:340px;overflow:auto;padding:6px}
+  .searchpop .it{padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+  .searchpop .it:hover{background:#182148}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:linear-gradient(160deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:14px 15px}
+  .kpi .l{font-size:11.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px}
+  .kpi .n{font-size:26px;font-weight:800;margin-top:6px;line-height:1.1}
+  .kpi .s{font-size:11.5px;color:var(--mut2);margin-top:3px}
+  .kpi .n.good{color:var(--good)} .kpi .n.bad{color:var(--bad)} .kpi .n.acc{color:#6fd3ff} .kpi .n.cash{color:var(--cash)}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 16px;margin-bottom:16px;box-shadow:0 14px 40px rgba(0,0,0,.35)}
+  .card h3{font-size:13px;margin:0 0 12px;color:#cdd6ff;text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:8px}
+  .card h3 .r{margin-left:auto;font-weight:600;letter-spacing:0;text-transform:none}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}.shell{grid-template-columns:1fr}.side{position:static;height:auto}}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}
+  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#141c40}
+  .scroll{overflow-x:auto}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800;letter-spacing:.2px}
+  .pill.play{background:#0f2f1c;color:#66ffa6} .pill.wait{background:#2a2a12;color:#ffe08a}
+  .pill.over{background:#2a1430;color:#ff9fe0} .pill.cash{background:#2a2410;color:var(--cash)}
+  .pill.free{background:#122238;color:#8fd0ff} .pill.ban{background:#2c1016;color:#ff8098}
+  .pill.flag{background:#2a2410;color:#ffd479} .pill.admin{background:#161f52;color:#9fb4ff}
+  .pill.on{background:#0f2f1c;color:#66ffa6} .pill.off{background:#20263f;color:#8b95c9}
+  .bot{color:#6b76b0}
+  .link{color:#8fd0ff;cursor:pointer} .link:hover{text-decoration:underline}
+  .flags .f{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;margin:2px 4px 2px 0}
+  .f.danger{background:#2c1016;color:#ff8098} .f.warn{background:#2a2210;color:var(--warn)} .f.watch{background:#161f52;color:#9fb4ff}
+
+  /* toast */
+  #toasts{position:fixed;right:16px;bottom:16px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+  .toast{background:#151d40;border:1px solid var(--line);border-left:4px solid var(--acc);border-radius:10px;padding:11px 14px;min-width:230px;max-width:340px;box-shadow:0 12px 34px rgba(0,0,0,.5);font-size:13px;animation:tin .2s ease}
+  .toast.good{border-left-color:var(--good)} .toast.bad{border-left-color:var(--bad)} .toast.warn{border-left-color:var(--warn)}
+  @keyframes tin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  /* modal */
+  #modal{position:fixed;inset:0;z-index:900;background:rgba(6,10,24,.72);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+  .sheet{width:100%;max-width:640px;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .sheet .hd{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line2)}
+  .sheet .hd .x{margin-left:auto;cursor:pointer;color:var(--mut);font-size:18px}
+  .sheet .bd{padding:16px 18px}
+  .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 10px;font-size:13px;margin-bottom:12px}
+  .kv .k{color:var(--mut)}
+  .seg{display:flex;gap:0;border:1px solid var(--line);border-radius:9px;overflow:hidden;width:max-content}
+  .seg button{background:#0e1430;color:#b9c2ee;border-radius:0;font-weight:600}
+  .seg button.on{background:#1e2a5e;color:#fff}
 </style>
 </head>
 <body>
 
 <!-- LOGIN -->
 <div id="login" class="card">
-  <h1>🦆 <span class="tm">Admin</span> Portal</h1>
-  <p class="muted" style="margin:6px 0 16px">Last Duck Standing — administrator access only.</p>
+  <h1>🦆 <span class="tm">Operations</span></h1>
+  <p class="muted" style="margin:4px 0 16px">Last Duck Standing — administrator access only.</p>
   <input id="u" placeholder="Admin username" autocomplete="username" />
   <input id="p" type="password" placeholder="Password" autocomplete="current-password" />
   <div id="loginErr" class="err"></div>
   <button id="btnLogin" style="width:100%">Log in</button>
 </div>
 
-<!-- DASHBOARD -->
-<div id="dash" class="wrap hidden">
-  <div class="topbar">
-    <h1>🦆 <span class="tm">Admin</span> Portal</h1>
-    <div class="row">
-      <span id="refreshNote" class="muted"></span>
-      <button id="btnRefresh" class="ghost sm">Refresh now</button>
-      <button id="btnLogout" class="ghost sm">Log out</button>
+<!-- APP -->
+<div id="app" class="shell hidden">
+  <aside class="side">
+    <div class="brand">🦆 <span class="tm">LDS</span> Ops</div>
+    <nav class="nav" id="nav">
+      <a data-tab="dashboard" class="on"><span class="ic">📊</span> Dashboard</a>
+      <a data-tab="live"><span class="ic">🟢</span> Live ops</a>
+      <a data-tab="players"><span class="ic">👤</span> Players</a>
+      <a data-tab="finance"><span class="ic">💵</span> Finance</a>
+      <a data-tab="payouts"><span class="ic">💸</span> Payouts <span id="navPend" class="badge hidden">0</span></a>
+      <a data-tab="transactions"><span class="ic">🧾</span> Transactions</a>
+      <a data-tab="moderation"><span class="ic">🛡️</span> Moderation</a>
+      <a data-tab="broadcast"><span class="ic">📢</span> Broadcast</a>
+      <a data-tab="settings"><span class="ic">⚙️</span> Settings</a>
+      <a data-tab="audit"><span class="ic">📜</span> Audit log</a>
+    </nav>
+    <div class="foot">
+      <div>Signed in as <b id="whoami" class="tm">admin</b></div>
+      <div style="margin-top:8px"><button id="btnLogout" class="ghost sm" style="width:100%">Log out</button></div>
     </div>
-  </div>
+  </aside>
 
-  <div class="stats">
-    <div class="stat"><div class="n" id="stGames">0</div><div class="l">Active games</div></div>
-    <div class="stat"><div class="n" id="stOnline">0</div><div class="l">Players online</div></div>
-    <div class="stat"><div class="n" id="stPending">0</div><div class="l">Pending payouts</div></div>
-  </div>
-
-  <div class="card">
-    <h2>Active games</h2>
-    <div class="scroll"><table id="gamesTbl"><thead><tr>
-      <th>Code</th><th>Status</th><th>Stake</th><th>Pot</th><th>Alive</th><th>Players</th><th>Time</th>
-    </tr></thead><tbody></tbody></table></div>
-  </div>
-
-  <div class="card">
-    <h2>Players online</h2>
-    <div class="scroll"><table id="onlineTbl"><thead><tr>
-      <th>User</th><th>Balance</th><th>Status</th>
-    </tr></thead><tbody></tbody></table></div>
-  </div>
-
-  <div class="card">
-    <h2>Issue / remove credits</h2>
-    <div class="row" style="margin-bottom:8px">
-      <input id="cUser" placeholder="username" style="width:180px" />
-      <input id="cAmt" type="number" min="1" placeholder="amount" style="width:130px" />
-      <button id="btnIssue" class="good">+ Issue</button>
-      <button id="btnRemove" class="bad">− Remove</button>
+  <main class="main">
+    <div class="top">
+      <h2 id="tabTitle">Dashboard</h2>
+      <span class="live"><span class="d"></span> <span id="liveTxt">live</span></span>
+      <div class="grow"></div>
+      <div class="search">
+        <span class="mag">🔎</span>
+        <input id="q" placeholder="Search players…  ( / )" autocomplete="off" />
+        <div id="searchpop" class="searchpop hidden"></div>
+      </div>
+      <select id="rate" title="Auto-refresh interval">
+        <option value="0">Paused</option>
+        <option value="3000">3s</option>
+        <option value="5000" selected>5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+      </select>
+      <button id="btnRefresh" class="ghost sm">↻ Refresh</button>
     </div>
-    <div id="creditMsg" class="ok"></div>
-  </div>
 
-  <div class="card">
-    <h2>Payout requests</h2>
-    <div class="scroll"><table id="wdTbl"><thead><tr>
-      <th>#</th><th>User</th><th>Amount</th><th>Status</th><th>Requested</th><th>Action</th>
-    </tr></thead><tbody></tbody></table></div>
-    <div id="wdMsg" class="ok"></div>
-  </div>
+    <!-- DASHBOARD -->
+    <section id="s-dashboard">
+      <div class="cards" id="kpis"></div>
+      <div class="grid2">
+        <div class="card"><h3>Concurrency <span class="r muted" id="ccPeak"></span></h3>
+          <canvas id="ccChart" height="90" style="width:100%"></canvas></div>
+        <div class="card"><h3>Server health</h3><div id="health"></div></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><h3>Top balances</h3><div class="scroll"><table id="topBal"><tbody></tbody></table></div></div>
+        <div class="card"><h3>Top winners</h3><div class="scroll"><table id="topWin"><tbody></tbody></table></div></div>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>All accounts</h2>
-    <div class="scroll"><table id="usersTbl"><thead><tr>
-      <th>User</th><th>Balance</th><th>Wins</th><th>Joined</th><th></th>
-    </tr></thead><tbody></tbody></table></div>
-  </div>
+    <!-- LIVE -->
+    <section id="s-live" class="hidden">
+      <div class="card"><h3>Active games <span class="r"><span id="liveGames">0</span> running</span></h3>
+        <div class="scroll"><table id="gamesTbl"><thead><tr>
+          <th>Code</th><th>Status</th><th>Stake</th><th>Pot</th><th>Alive</th><th>Players</th><th>Time</th><th></th>
+        </tr></thead><tbody></tbody></table></div></div>
+      <div class="card"><h3>Players online <span class="r"><span id="liveOnline">0</span> online</span></h3>
+        <div class="scroll"><table id="onlineTbl"><thead><tr>
+          <th>User</th><th>Balance</th><th>Status</th><th></th>
+        </tr></thead><tbody></tbody></table></div></div>
+    </section>
+
+    <!-- PLAYERS -->
+    <section id="s-players" class="hidden">
+      <div class="card"><h3>All accounts <span class="r"><button class="ghost sm" id="expUsers">⬇ CSV</button></span></h3>
+        <div class="row" style="margin-bottom:10px">
+          <input id="pFilter" placeholder="Filter loaded accounts…" style="width:220px" />
+          <label class="muted tiny"><input type="checkbox" id="pFlagged" style="width:auto"> flagged only</label>
+          <label class="muted tiny"><input type="checkbox" id="pBanned" style="width:auto"> banned only</label>
+        </div>
+        <div class="scroll"><table id="usersTbl"><thead><tr>
+          <th>User</th><th>Balance</th><th>Wins</th><th>Status</th><th>Joined</th><th></th>
+        </tr></thead><tbody></tbody></table></div></div>
+    </section>
+
+    <!-- FINANCE -->
+    <section id="s-finance" class="hidden">
+      <div class="cards" id="finKpis"></div>
+      <div class="card"><h3>Credit adjuster <span class="r muted">audited</span></h3>
+        <div class="row">
+          <input id="cUser" placeholder="username" style="width:170px" />
+          <input id="cAmt" type="number" min="1" placeholder="amount" style="width:120px" />
+          <input id="cReason" placeholder="reason (optional)" style="width:200px" />
+          <button id="btnIssue" class="good">+ Issue</button>
+          <button id="btnRemove" class="bad">− Remove</button>
+        </div>
+        <div id="creditMsg" class="tiny" style="margin-top:8px"></div></div>
+      <div class="card"><h3>House &amp; config</h3><div id="config"></div></div>
+    </section>
+
+    <!-- PAYOUTS -->
+    <section id="s-payouts" class="hidden">
+      <div class="card"><h3>Payout requests <span class="r"><button class="ghost sm" id="expWd">⬇ CSV</button></span></h3>
+        <div class="row" style="margin-bottom:10px">
+          <div class="seg" id="wdSeg">
+            <button data-f="all" class="on">All</button><button data-f="pending">Pending</button>
+            <button data-f="approved">Approved</button><button data-f="rejected">Rejected</button>
+          </div>
+        </div>
+        <div class="scroll"><table id="wdTbl"><thead><tr>
+          <th>#</th><th>User</th><th>Amount</th><th>Status</th><th>Requested</th><th>Action</th>
+        </tr></thead><tbody></tbody></table></div>
+        <div id="wdMsg" class="tiny" style="margin-top:8px"></div></div>
+    </section>
+
+    <!-- TRANSACTIONS -->
+    <section id="s-transactions" class="hidden">
+      <div class="card"><h3>Transaction feed <span class="r"><button class="ghost sm" id="expTx">⬇ CSV</button></span></h3>
+        <div class="row" style="margin-bottom:10px">
+          <select id="txKind">
+            <option value="">All kinds</option>
+            <option value="deposit">deposit</option><option value="deposit_pending">deposit_pending</option>
+            <option value="withdraw">withdraw</option><option value="withdraw_done">withdraw_done</option>
+            <option value="withdraw_refunded">withdraw_refunded</option>
+          </select>
+        </div>
+        <div class="scroll"><table id="txTbl"><thead><tr>
+          <th>When</th><th>User</th><th>Kind</th><th>Amount</th><th>Ref</th>
+        </tr></thead><tbody></tbody></table></div></div>
+    </section>
+
+    <!-- MODERATION -->
+    <section id="s-moderation" class="hidden">
+      <div class="grid2">
+        <div class="card"><h3>🚫 Ban / suspend</h3>
+          <div class="row"><input id="mBanUser" placeholder="username" style="width:170px" />
+            <input id="mBanReason" placeholder="reason" style="flex:1;min-width:150px" /></div>
+          <div class="row" style="margin-top:9px"><button id="btnBan" class="bad">Ban user</button>
+            <button id="btnUnban" class="ghost">Unban</button></div>
+          <div id="banMsg" class="tiny" style="margin-top:8px"></div></div>
+        <div class="card"><h3>🚩 Flag / note</h3>
+          <div class="row"><input id="mFlagUser" placeholder="username" style="width:170px" />
+            <button id="btnFlag" class="warn">Flag</button><button id="btnUnflag" class="ghost">Unflag</button></div>
+          <textarea id="mNote" placeholder="Admin note for this user…" style="margin-top:9px"></textarea>
+          <div class="row" style="margin-top:8px"><button id="btnNote" class="ghost">Save note</button></div>
+          <div id="flagMsg" class="tiny" style="margin-top:8px"></div></div>
+      </div>
+      <div class="card"><h3>🎮 Game control</h3>
+        <div class="row"><input id="mVoidCode" placeholder="game code (e.g. AB3D)" style="width:170px" />
+          <button id="btnVoid" class="bad">Void &amp; refund</button>
+          <input id="mKickUser" placeholder="username" style="width:170px" />
+          <button id="btnKick" class="warn">Kick from game</button></div>
+        <div id="gameMsg" class="tiny" style="margin-top:8px"></div></div>
+    </section>
+
+    <!-- BROADCAST -->
+    <section id="s-broadcast" class="hidden">
+      <div class="card"><h3>📢 Broadcast to online players</h3>
+        <textarea id="bcText" placeholder="Message shown as a banner to everyone online…" maxlength="240"></textarea>
+        <div class="row" style="margin-top:9px">
+          <select id="bcLevel"><option value="info">Info (blue)</option><option value="warn">Warning (amber)</option><option value="alert">Alert (red)</option></select>
+          <button id="btnBroadcast">Send to all</button>
+          <button id="btnClearBc" class="ghost">Clear banner</button>
+        </div>
+        <div id="bcMsg" class="tiny" style="margin-top:8px"></div>
+        <p class="muted tiny" style="margin-top:10px">Sent instantly to every connected player and shown to anyone who joins until you clear it.</p></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="s-settings" class="hidden">
+      <div class="card"><h3>🛠️ Maintenance mode</h3>
+        <div class="row"><span id="maintState" class="pill off">OFF</span>
+          <button id="btnMaint" class="warn">Toggle maintenance</button></div>
+        <textarea id="maintMsg" placeholder="Message shown on the closed site…" style="margin-top:10px"></textarea>
+        <div class="row" style="margin-top:8px"><button id="btnMaintMsg" class="ghost">Save message</button></div>
+        <p class="muted tiny" style="margin-top:8px">When ON, the player site shows a closed page and matchmaking/sign-ups pause. You keep full access (admin + <span class="mono">?geo=</span> bypass).</p>
+        <div id="setMsg" class="tiny"></div></div>
+      <div class="card"><h3>Runtime configuration</h3><div id="cfg2" class="muted tiny">Loading…</div></div>
+    </section>
+
+    <!-- AUDIT -->
+    <section id="s-audit" class="hidden">
+      <div class="card"><h3>📜 Admin audit log <span class="r"><button class="ghost sm" id="expAudit">⬇ CSV</button></span></h3>
+        <div class="scroll"><table id="auditTbl"><thead><tr>
+          <th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>Detail</th>
+        </tr></thead><tbody></tbody></table></div></div>
+    </section>
+  </main>
 </div>
 
+<div id="modal" class="hidden"></div>
+<div id="toasts"></div>
+
 <script>
-(function () {
-  var $ = function (id) { return document.getElementById(id); };
-  var token = localStorage.getItem('lds_admin_token') || null;
-  var timer = null;
+(function(){
+  var $=function(id){return document.getElementById(id);};
+  var token=localStorage.getItem('lds_admin_token')||null;
+  var timer=null, tab='dashboard';
+  var cache={users:[],wd:[],tx:[],audit:[]};
+  var ccHist=[];
 
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
-    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
-  function fmtCredits(c) { return c == null ? '—' : '💰 ' + c; }
-  function fmtTime(t) { if (!t) return '—'; try { return new Date(t).toLocaleString(); } catch (e) { return t; } }
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];});}
+  function money(c){return c==null?'—':'💰 '+Number(c).toLocaleString();}
+  function ftime(t){if(!t)return'—';try{return new Date(t).toLocaleString();}catch(e){return t;}}
+  function ago(t){if(!t)return'—';var s=(Date.now()-new Date(t).getTime())/1000;if(s<60)return Math.floor(s)+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
 
-  async function api(pathName, extra) {
-    var body = Object.assign({ token: token }, extra || {});
-    var r = await fetch('/api/admin/' + pathName, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-    var d = {}; try { d = await r.json(); } catch (e) {}
-    if (r.status === 403) { logout('Session expired — log in again.'); throw new Error('forbidden'); }
+  function toast(msg,kind){var t=document.createElement('div');t.className='toast '+(kind||'');t.textContent=msg;$('toasts').appendChild(t);setTimeout(function(){t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(function(){t.remove();},300);},3200);}
+
+  async function api(pathName,extra){
+    var body=Object.assign({token:token},extra||{});
+    var r=await fetch('/api/admin/'+pathName,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d={};try{d=await r.json();}catch(e){}
+    if(r.status===403){logout('Session expired — log in again.');throw new Error('forbidden');}
     return d;
   }
 
   // ---- login ----
-  async function login() {
-    var u = $('u').value.trim(), p = $('p').value;
-    $('loginErr').textContent = '';
-    if (!u || !p) { $('loginErr').textContent = 'Enter username and password.'; return; }
-    try {
-      var r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p }) });
-      var d = await r.json();
-      if (d.error) { $('loginErr').textContent = d.error; return; }
-      if (!d.admin) { $('loginErr').textContent = 'That account is not an administrator.'; return; }
-      token = d.token; localStorage.setItem('lds_admin_token', token);
-      showDash();
-    } catch (e) { $('loginErr').textContent = 'Could not reach the server.'; }
+  async function login(){
+    var u=$('u').value.trim(),p=$('p').value;$('loginErr').textContent='';
+    if(!u||!p){$('loginErr').textContent='Enter username and password.';return;}
+    try{
+      var r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+      var d=await r.json();
+      if(d.error){$('loginErr').textContent=d.error;return;}
+      if(!d.admin){$('loginErr').textContent='That account is not an administrator.';return;}
+      token=d.token;localStorage.setItem('lds_admin_token',token);$('whoami').textContent=d.username;showApp();
+    }catch(e){$('loginErr').textContent='Could not reach the server.';}
   }
-  function logout(msg) {
-    token = null; localStorage.removeItem('lds_admin_token');
-    if (timer) { clearInterval(timer); timer = null; }
-    $('dash').classList.add('hidden'); $('login').classList.remove('hidden');
-    if (msg) $('loginErr').textContent = msg;
-  }
-  $('btnLogin').onclick = login;
-  $('p').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
-  $('btnLogout').onclick = function () { logout(''); };
+  function logout(msg){token=null;localStorage.removeItem('lds_admin_token');if(timer){clearInterval(timer);timer=null;}
+    $('app').classList.add('hidden');$('login').classList.remove('hidden');if(msg)$('loginErr').textContent=msg;}
+  $('btnLogin').onclick=login;
+  $('p').addEventListener('keydown',function(e){if(e.key==='Enter')login();});
+  $('btnLogout').onclick=function(){logout('');};
 
-  function showDash() {
-    $('login').classList.add('hidden'); $('dash').classList.remove('hidden');
-    refresh();
-    if (timer) clearInterval(timer);
-    timer = setInterval(refresh, 4000);
-  }
+  function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden');setTab('dashboard');startTimer();refresh();}
 
-  // ---- render ----
-  function statusPill(phase) {
-    if (phase === 'playing') return '<span class="pill play">playing</span>';
-    if (phase === 'matchmaking') return '<span class="pill wait">matchmaking</span>';
-    if (phase === 'countdown') return '<span class="pill wait">starting</span>';
-    if (phase === 'roundover') return '<span class="pill over">round over</span>';
-    return '<span class="pill">' + esc(phase) + '</span>';
+  // ---- nav ----
+  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',moderation:'Moderation',broadcast:'Broadcast',settings:'Settings',audit:'Audit log'};
+  function setTab(t){tab=t;$('tabTitle').textContent=titles[t]||t;
+    Array.prototype.forEach.call(document.querySelectorAll('#nav a'),function(a){a.classList.toggle('on',a.getAttribute('data-tab')===t);});
+    Array.prototype.forEach.call(document.querySelectorAll('main section'),function(s){s.classList.add('hidden');});
+    $('s-'+t).classList.remove('hidden');refresh();}
+  Array.prototype.forEach.call(document.querySelectorAll('#nav a'),function(a){a.onclick=function(){setTab(a.getAttribute('data-tab'));};});
+
+  function startTimer(){if(timer)clearInterval(timer);var ms=parseInt($('rate').value,10)||0;if(ms>0)timer=setInterval(refresh,ms);}
+  $('rate').onchange=startTimer;
+  $('btnRefresh').onclick=function(){refresh();};
+
+  // ---------- refresh dispatcher ----------
+  async function refresh(){
+    try{
+      // always-on light polls: metrics feed the dashboard + nav badge
+      var m=await api('metrics');lastMetrics=m;renderTopbar(m);
+      if(tab==='dashboard')renderDashboard(m);
+      if(tab==='live')await renderLive();
+      if(tab==='players')await loadUsers();
+      if(tab==='finance'){renderFinance(m);await loadUsersForConfig();}
+      if(tab==='payouts')await loadWithdrawals();
+      if(tab==='transactions')await loadTx();
+      if(tab==='settings')await loadSettings();
+      if(tab==='audit')await loadAudit();
+      $('liveTxt').textContent='updated '+new Date().toLocaleTimeString();
+    }catch(e){}
   }
-  function renderGames(games) {
-    var tb = $('gamesTbl').getElementsByTagName('tbody')[0];
-    if (!games.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">No active games.</td></tr>'; return; }
-    tb.innerHTML = games.map(function (g) {
-      var stake = g.wager > 0 ? '<span class="pill cash">' + g.wager + '</span>' : '<span class="pill free">free</span>';
-      var names = g.players.map(function (p) {
-        var cls = p.bot ? 'bot' : '';
-        var dead = p.alive ? '' : ' dot';
-        return '<span class="' + cls + '">' + esc(p.name) + (p.alive ? '' : ' ✗') + '</span>';
-      }).join(', ');
-      return '<tr><td><b>' + esc(g.code) + '</b></td><td>' + statusPill(g.phase) + '</td><td>' + stake +
-        '</td><td>' + (g.wager > 0 ? g.pot : '—') + '</td><td>' + g.alive + '/' + g.total +
-        '</td><td class="players">' + names + '</td><td>' + (g.phase === 'playing' ? g.roundTime + 's' : '—') + '</td></tr>';
-    }).join('');
-  }
-  function renderOnline(list) {
-    var tb = $('onlineTbl').getElementsByTagName('tbody')[0];
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">Nobody online right now.</td></tr>'; return; }
-    tb.innerHTML = list.map(function (o) {
-      var st = o.inGame ? '<span class="pill play">in game ' + esc(o.room || '') + '</span>' : '<span class="pill free">in lobby</span>';
-      var badge = o.admin ? ' <span class="pill cash">admin</span>' : '';
-      return '<tr><td>' + esc(o.username) + badge + '</td><td>' + fmtCredits(o.credits) + '</td><td>' + st + '</td></tr>';
-    }).join('');
-  }
-  function renderWithdrawals(list) {
-    var tb = $('wdTbl').getElementsByTagName('tbody')[0];
-    var pending = 0;
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">No payout requests.</td></tr>'; }
-    else {
-      tb.innerHTML = list.map(function (w) {
-        var isPending = (w.status || 'pending') === 'pending';
-        if (isPending) pending++;
-        var action = isPending
-          ? '<button class="good sm" data-approve="' + w.id + '">Approve</button> ' +
-            '<button class="bad sm" data-reject="' + w.id + '">Reject</button>'
-          : '<span class="muted">' + esc(w.status) + '</span>';
-        var stcls = isPending ? 'wait' : (w.status === 'approved' ? 'play' : 'over');
-        return '<tr><td>' + esc(w.id) + '</td><td>' + esc(w.username_lower) + '</td><td>💰 ' + w.amount +
-          '</td><td><span class="pill ' + stcls + '">' + esc(w.status || 'pending') + '</span></td><td class="muted">' +
-          fmtTime(w.created_at) + '</td><td>' + action + '</td></tr>';
-      }).join('');
-      bindWdButtons();
-    }
-    $('stPending').textContent = pending;
-  }
-  function renderUsers(list) {
-    var tb = $('usersTbl').getElementsByTagName('tbody')[0];
-    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No accounts.</td></tr>'; return; }
-    tb.innerHTML = list.map(function (u) {
-      return '<tr><td>' + esc(u.username) + '</td><td>' + fmtCredits(u.credits) + '</td><td>' + (u.wins || 0) +
-        '</td><td class="muted">' + fmtTime(u.created_at) + '</td><td>' +
-        '<button class="ghost sm" data-fill="' + esc(u.username) + '">Manage</button></td></tr>';
-    }).join('');
-    Array.prototype.forEach.call(tb.querySelectorAll('button[data-fill]'), function (b) {
-      b.onclick = function () { $('cUser').value = b.getAttribute('data-fill'); $('cAmt').focus(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-    });
-  }
-  function bindWdButtons() {
-    var tb = $('wdTbl');
-    Array.prototype.forEach.call(tb.querySelectorAll('button[data-approve]'), function (b) {
-      b.onclick = function () { handleWd(b.getAttribute('data-approve'), 'approve'); };
-    });
-    Array.prototype.forEach.call(tb.querySelectorAll('button[data-reject]'), function (b) {
-      b.onclick = function () { handleWd(b.getAttribute('data-reject'), 'reject'); };
-    });
+  var lastMetrics=null;
+
+  function renderTopbar(m){
+    var pend=(m.pendingPayouts&&m.pendingPayouts.count)||0;
+    var b=$('navPend');if(pend>0){b.textContent=pend;b.classList.remove('hidden');}else b.classList.add('hidden');
+    // concurrency history
+    var on=(m.live&&m.live.online)||0;ccHist.push(on);if(ccHist.length>60)ccHist.shift();
   }
 
-  async function handleWd(id, action) {
-    $('wdMsg').textContent = '';
-    try {
-      var d = await api('withdrawal', { id: id, action: action });
-      if (d.error) { $('wdMsg').textContent = d.error; $('wdMsg').className = 'err'; }
-      else {
-        $('wdMsg').className = 'ok';
-        $('wdMsg').textContent = action === 'approve'
-          ? ('✓ Approved #' + id + ' — deducted ' + d.deducted + ' credits.')
-          : ('✓ Rejected #' + id + '.');
-      }
-      refresh();
-    } catch (e) {}
+  // ---------- DASHBOARD ----------
+  function kpi(label,val,cls,sub){return '<div class="kpi"><div class="l">'+label+'</div><div class="n '+(cls||'')+'">'+val+'</div>'+(sub?'<div class="s">'+sub+'</div>':'')+'</div>';}
+  function renderDashboard(m){
+    var fin=m.finance||{},eco=m.economy||{},live=m.live||{};
+    var html='';
+    html+=kpi('🟢 Online',live.online||0,'good',(live.searching||0)+' searching · '+(live.playing||0)+' in game');
+    html+=kpi('🎮 Live games',live.cashGames!=null?(m.health.rooms||0):0,'acc',(live.cashGames||0)+' cash · pot '+money(live.potLive||0));
+    html+=kpi('📈 Peak online',m.peakOnline||0,'',' since restart');
+    html+=kpi('💵 Fee revenue',money(m.feeRevenue||0),'cash','est. from '+ (fin.deposit_count||0)+' deposits');
+    html+=kpi('🏦 Credit liability',money(eco.total_credits||0),'','outstanding player balances');
+    html+=kpi('💸 Pending payouts',money((m.pendingPayouts&&m.pendingPayouts.amount)||0),'bad',((m.pendingPayouts&&m.pendingPayouts.count)||0)+' awaiting');
+    html+=kpi('👥 Accounts',eco.user_count||0,'',(eco.new_users_24h||0)+' new (24h)');
+    html+=kpi('🏆 Total wins',eco.total_wins||0,'','across all players');
+    $('kpis').innerHTML=html;
+    $('ccPeak').textContent='peak '+(m.peakOnline||0);
+    renderHealth(m.health||{});drawChart();
+    // leaderboards from users (load once)
+    loadUsers().then(function(){renderLeaders();});
+  }
+  function renderHealth(h){
+    function up(s){s=s||0;var d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),mm=Math.floor(s%3600/60);return (d?d+'d ':'')+(hh?hh+'h ':'')+mm+'m';}
+    var rows=[
+      ['Uptime',up(h.uptime)],['Memory',(h.heapUsed||0)+' / '+(h.heapTotal||0)+' MB heap · '+(h.rss||0)+' MB RSS'],
+      ['Connections',(h.sessions||0)+' sockets · '+(h.humans||0)+' players · '+(h.bots||0)+' bots'],
+      ['Active rooms',h.rooms||0],['Node',esc(h.node||'')+' · '+esc(h.backend||'')+' backend'],
+      ['BTCPay',h.btcpay?'<span class="pill on">connected</span>':'<span class="pill off">off</span>'],
+      ['Geo-fence',h.geoEnforce?('<span class="pill on">ON</span> '+esc((h.geoBlock||[]).join(', '))):'<span class="pill off">off</span>'],
+      ['Origin lock',h.originLock?'<span class="pill on">ON</span>':'<span class="pill off">off</span>'],
+      ['Maintenance',h.maintenance?'<span class="pill ban">ON</span>':'<span class="pill on">live</span>'],
+    ];
+    $('health').innerHTML='<div class="kv">'+rows.map(function(r){return '<div class="k">'+r[0]+'</div><div>'+r[1]+'</div>';}).join('')+'</div>';
+  }
+  function drawChart(){
+    var c=$('ccChart');if(!c)return;var w=c.clientWidth||600,h=90;c.width=w;c.height=h;var x=c.getContext('2d');
+    x.clearRect(0,0,w,h);if(ccHist.length<2){x.fillStyle='#5f6aa0';x.font='12px system-ui';x.fillText('collecting…',8,20);return;}
+    var mx=Math.max.apply(null,ccHist),mn=0;mx=Math.max(mx,4);
+    var step=w/(ccHist.length-1);
+    var grad=x.createLinearGradient(0,0,0,h);grad.addColorStop(0,'rgba(90,139,255,.4)');grad.addColorStop(1,'rgba(90,139,255,0)');
+    x.beginPath();x.moveTo(0,h);ccHist.forEach(function(v,i){var px=i*step,py=h-((v-mn)/(mx-mn))*(h-14)-6;x.lineTo(px,py);});
+    x.lineTo(w,h);x.closePath();x.fillStyle=grad;x.fill();
+    x.beginPath();ccHist.forEach(function(v,i){var px=i*step,py=h-((v-mn)/(mx-mn))*(h-14)-6;i?x.lineTo(px,py):x.moveTo(px,py);});
+    x.strokeStyle='#6fa0ff';x.lineWidth=2;x.stroke();
+    x.fillStyle='#8b95c9';x.font='11px system-ui';x.fillText('peak '+mx,6,12);
+  }
+  function renderLeaders(){
+    var byBal=cache.users.slice(0,8);
+    $('topBal').getElementsByTagName('tbody')[0].innerHTML=byBal.map(function(u){return '<tr><td class="link" data-user="'+esc(u.username)+'">'+esc(u.username)+'</td><td>'+money(u.credits)+'</td></tr>';}).join('')||'<tr><td class="muted">—</td></tr>';
+    var byWin=cache.users.slice().sort(function(a,b){return (b.wins||0)-(a.wins||0);}).slice(0,8);
+    $('topWin').getElementsByTagName('tbody')[0].innerHTML=byWin.map(function(u){return '<tr><td class="link" data-user="'+esc(u.username)+'">'+esc(u.username)+'</td><td>🏆 '+(u.wins||0)+'</td></tr>';}).join('')||'<tr><td class="muted">—</td></tr>';
+    bindUserLinks();
   }
 
-  async function adjust(sign) {
-    var user = $('cUser').value.trim();
-    var amt = parseInt($('cAmt').value, 10);
-    $('creditMsg').textContent = '';
-    if (!user || !amt || amt <= 0) { $('creditMsg').className = 'err'; $('creditMsg').textContent = 'Enter a username and a positive amount.'; return; }
-    try {
-      var d = await api('credits', { username: user, delta: sign * amt });
-      if (d.error) { $('creditMsg').className = 'err'; $('creditMsg').textContent = d.error; }
-      else { $('creditMsg').className = 'ok';
-        $('creditMsg').textContent = '✓ ' + d.username + ' is now at 💰 ' + d.credits + ' credits (' + (d.delta > 0 ? '+' : '') + d.delta + ').';
-        $('cAmt').value = ''; }
-      refresh();
-    } catch (e) {}
+  // ---------- LIVE ----------
+  function statusPill(p){return p==='playing'?'<span class="pill play">playing</span>':(p==='matchmaking'?'<span class="pill wait">matchmaking</span>':(p==='countdown'?'<span class="pill wait">starting</span>':(p==='lobby'?'<span class="pill wait">lobby</span>':(p==='roundover'?'<span class="pill over">round over</span>':'<span class="pill">'+esc(p)+'</span>'))));}
+  async function renderLive(){
+    var ov=await api('overview');
+    var g=ov.games||[];$('liveGames').textContent=g.length;
+    var tb=$('gamesTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=g.length?g.map(function(x){
+      var stake=x.wager>0?'<span class="pill cash">'+x.wager+'</span>':'<span class="pill free">free</span>';
+      var names=x.players.map(function(p){return '<span class="'+(p.bot?'bot':'')+'">'+esc(p.name)+(p.alive?'':' ✗')+'</span>';}).join(', ');
+      return '<tr><td><b>'+esc(x.code)+'</b></td><td>'+statusPill(x.phase)+'</td><td>'+stake+'</td><td>'+(x.wager>0?money(x.pot):'—')+'</td><td>'+x.alive+'/'+x.total+'</td><td class="muted" style="white-space:normal;max-width:280px">'+names+'</td><td>'+(x.phase==='playing'?x.roundTime+'s':'—')+'</td><td><button class="bad sm" data-void="'+esc(x.code)+'">Void</button></td></tr>';
+    }).join(''):'<tr><td colspan="8" class="muted">No active games.</td></tr>';
+    var on=ov.online||[];$('liveOnline').textContent=on.length;
+    var tb2=$('onlineTbl').getElementsByTagName('tbody')[0];
+    tb2.innerHTML=on.length?on.map(function(o){
+      var st=o.inGame?'<span class="pill play">in game '+esc(o.room||'')+'</span>':'<span class="pill free">lobby</span>';
+      var badge=o.admin?' <span class="pill admin">admin</span>':'';
+      return '<tr><td class="link" data-user="'+esc(o.username)+'">'+esc(o.username)+badge+'</td><td>'+money(o.credits)+'</td><td>'+st+'</td><td>'+(o.admin?'':'<button class="warn sm" data-kick="'+esc(o.username)+'">Kick</button>')+'</td></tr>';
+    }).join(''):'<tr><td colspan="4" class="muted">Nobody online.</td></tr>';
+    bindUserLinks();
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-void]'),function(b){b.onclick=function(){voidGame(b.getAttribute('data-void'));};});
+    Array.prototype.forEach.call(tb2.querySelectorAll('button[data-kick]'),function(b){b.onclick=function(){doKick(b.getAttribute('data-kick'));};});
   }
-  $('btnIssue').onclick = function () { adjust(1); };
-  $('btnRemove').onclick = function () { adjust(-1); };
-  $('btnRefresh').onclick = function () { refresh(); };
 
-  async function refresh() {
-    try {
-      var ov = await api('overview');
-      renderGames(ov.games || []);
-      renderOnline(ov.online || []);
-      $('stGames').textContent = (ov.counts && ov.counts.games) || 0;
-      $('stOnline').textContent = (ov.counts && ov.counts.online) || 0;
-      $('refreshNote').textContent = 'Updated ' + new Date().toLocaleTimeString();
-      var wd = await api('withdrawals'); renderWithdrawals(wd.withdrawals || []);
-      var us = await api('users'); renderUsers(us.users || []);
-    } catch (e) { /* logout handled in api() */ }
+  // ---------- PLAYERS ----------
+  async function loadUsers(){var d=await api('users');cache.users=d.users||[];if(tab==='players')renderUsers();return cache.users;}
+  function renderUsers(){
+    var f=($('pFilter').value||'').toLowerCase();var onlyF=$('pFlagged').checked,onlyB=$('pBanned').checked;
+    var list=cache.users.filter(function(u){return (!f||u.username_lower.indexOf(f)>=0)&&(!onlyF||u.flagged)&&(!onlyB||u.banned);});
+    var tb=$('usersTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=list.length?list.map(function(u){
+      var st=(u.banned?'<span class="pill ban">banned</span> ':'')+(u.flagged?'<span class="pill flag">flagged</span> ':'')||'<span class="pill on">ok</span>';
+      return '<tr><td class="link" data-user="'+esc(u.username)+'">'+esc(u.username)+'</td><td>'+money(u.credits)+'</td><td>🏆 '+(u.wins||0)+'</td><td>'+st+'</td><td class="muted">'+ftime(u.created_at)+'</td><td><button class="ghost sm" data-user="'+esc(u.username)+'">View</button></td></tr>';
+    }).join(''):'<tr><td colspan="6" class="muted">No matches.</td></tr>';
+    bindUserLinks();
   }
+  ['pFilter','pFlagged','pBanned'].forEach(function(id){$(id).addEventListener('input',renderUsers);});
+
+  function bindUserLinks(){Array.prototype.forEach.call(document.querySelectorAll('[data-user]'),function(el){el.onclick=function(){openUser(el.getAttribute('data-user'));};});}
+
+  // ---------- USER MODAL ----------
+  async function openUser(username){
+    var d=await api('user',{username:username});
+    if(d.error){toast(d.error,'bad');return;}
+    var u=d.user;
+    var flags=(d.risk||[]).map(function(f){return '<span class="f '+f.level+'">'+esc(f.text)+'</span>';}).join('')||'<span class="muted tiny">No risk flags</span>';
+    var txr=(d.tx||[]).slice(0,12).map(function(t){return '<tr><td class="muted">'+ftime(t.created_at)+'</td><td>'+esc(t.kind)+'</td><td>'+money(t.amount)+'</td></tr>';}).join('')||'<tr><td class="muted">No transactions</td></tr>';
+    var status=(u.banned?'<span class="pill ban">banned</span> ':'')+(u.flagged?'<span class="pill flag">flagged</span> ':'')+(u.online?'<span class="pill on">online</span>':'<span class="pill off">offline</span>');
+    var h='<div class="sheet"><div class="hd"><b style="font-size:16px">'+esc(u.username)+'</b> '+status+'<span class="x" id="mx">✕</span></div><div class="bd">'+
+      '<div class="flags" style="margin-bottom:12px">'+flags+'</div>'+
+      '<div class="kv">'+
+        '<div class="k">Balance</div><div>'+money(u.credits)+'</div>'+
+        '<div class="k">Wins / rank</div><div>🏆 '+(u.wins||0)+' · '+esc(u.rank&&u.rank.tier||('Level '+((u.rank&&u.rank.level)||1)))+'</div>'+
+        '<div class="k">Deposited</div><div>'+money(u.depositTotal)+'</div>'+
+        '<div class="k">Withdrawn</div><div>'+money(u.withdrawTotal)+'</div>'+
+        '<div class="k">Joined</div><div>'+ftime(u.created_at)+'</div>'+
+        '<div class="k">Last login</div><div>'+(u.last_seen?ftime(u.last_seen):'—')+'</div>'+
+        '<div class="k">Status</div><div>'+(u.inGame?('in game '+esc(u.room||'')):(u.online?'online':'offline'))+'</div>'+
+        (u.banned?'<div class="k">Ban reason</div><div>'+esc(u.banned_reason||'—')+'</div>':'')+
+        '<div class="k">Admin note</div><div>'+esc(u.admin_note||'—')+'</div>'+
+      '</div>'+
+      '<div class="row" style="margin:6px 0 14px">'+
+        '<input id="muAmt" type="number" placeholder="credits" style="width:110px"><button class="good sm" id="muAdd">+ add</button><button class="bad sm" id="muSub">− remove</button>'+
+        (u.banned?'<button class="ghost sm" id="muBan">Unban</button>':'<button class="bad sm" id="muBan">Ban</button>')+
+        (u.flagged?'<button class="ghost sm" id="muFlag">Unflag</button>':'<button class="warn sm" id="muFlag">Flag</button>')+
+        (u.online?'<button class="warn sm" id="muKick">Kick</button>':'')+
+      '</div>'+
+      '<h3 style="font-size:12px;color:#cdd6ff;text-transform:uppercase;letter-spacing:.6px;margin:0 0 6px">Recent transactions</h3>'+
+      '<div class="scroll"><table><tbody>'+txr+'</tbody></table></div>'+
+      '</div></div>';
+    var mo=$('modal');mo.innerHTML=h;mo.classList.remove('hidden');
+    $('mx').onclick=closeModal;mo.onclick=function(e){if(e.target===mo)closeModal();};
+    $('muAdd').onclick=function(){modUserCredit(u.username,1);};
+    $('muSub').onclick=function(){modUserCredit(u.username,-1);};
+    $('muBan').onclick=function(){u.banned?doUnban(u.username):doBan(u.username,prompt('Ban reason for '+u.username+':')||'');};
+    $('muFlag').onclick=function(){doFlag(u.username,!u.flagged);};
+    if($('muKick'))$('muKick').onclick=function(){doKick(u.username);};
+  }
+  function closeModal(){$('modal').classList.add('hidden');$('modal').innerHTML='';}
+  async function modUserCredit(user,sign){var a=parseInt($('muAmt').value,10);if(!a||a<=0){toast('Enter an amount','bad');return;}
+    var d=await api('credits',{username:user,delta:sign*a,reason:'panel'});if(d.error)toast(d.error,'bad');else{toast(user+' → '+money(d.credits),'good');closeModal();refresh();}}
+
+  // ---------- FINANCE ----------
+  function renderFinance(m){
+    var f=m.finance||{};
+    var html='';
+    html+=kpi('Gross deposits',money(m.grossDeposits||0),'cash',(f.deposit_count||0)+' confirmed');
+    html+=kpi('Fee revenue (1.5%)',money(m.feeRevenue||0),'good','est. platform cut');
+    html+=kpi('Credits issued',money(f.deposit_credits||0),'','net to players');
+    html+=kpi('Withdrawn',money(f.withdraw_amt||0),'bad',(f.withdraw_count||0)+' cash-outs');
+    html+=kpi('Payouts settled',money(f.withdraw_done_amt||0),'','on-chain confirmed');
+    html+=kpi('Refunded',money(f.refunded_amt||0),'','failed payouts');
+    html+=kpi('Pending liability',money((m.pendingPayouts&&m.pendingPayouts.amount)||0),'bad',((m.pendingPayouts&&m.pendingPayouts.count)||0)+' requests');
+    html+=kpi('Net position',money((f.deposit_credits||0)-(f.withdraw_amt||0)),((f.deposit_credits||0)-(f.withdraw_amt||0))>=0?'good':'bad','deposits − withdrawals');
+    $('finKpis').innerHTML=html;
+    var r=m.rates||{};
+    $('config').innerHTML='<div class="kv">'+
+      '<div class="k">BTC price</div><div>$'+(r.btc?Number(r.btc).toLocaleString():'—')+'</div>'+
+      '<div class="k">LTC price</div><div>$'+(r.ltc?Number(r.ltc).toLocaleString():'—')+'</div>'+
+      '<div class="k">Deposit fee</div><div>1.5%</div>'+
+      '<div class="k">Credit value</div><div>1 credit = $1</div>'+
+      '<div class="k">BTCPay</div><div>'+(m.health&&m.health.btcpay?'connected':'off')+'</div>'+
+      '</div>';
+  }
+  async function loadUsersForConfig(){if(!cache.users.length)await loadUsers();}
+
+  // ---------- PAYOUTS ----------
+  var wdFilter='all';
+  Array.prototype.forEach.call(document.querySelectorAll('#wdSeg button'),function(b){b.onclick=function(){wdFilter=b.getAttribute('data-f');Array.prototype.forEach.call(document.querySelectorAll('#wdSeg button'),function(x){x.classList.toggle('on',x===b);});renderWd();};});
+  async function loadWithdrawals(){var d=await api('withdrawals');cache.wd=d.withdrawals||[];renderWd();}
+  function renderWd(){
+    var list=cache.wd.filter(function(w){return wdFilter==='all'||(w.status||'pending')===wdFilter;});
+    var tb=$('wdTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=list.length?list.map(function(w){
+      var pend=(w.status||'pending')==='pending';
+      var act=pend?'<button class="good sm" data-ap="'+w.id+'">Approve</button> <button class="bad sm" data-rj="'+w.id+'">Reject</button>':'<span class="muted">'+esc(w.status)+'</span>';
+      var cls=pend?'wait':(w.status==='approved'?'play':'over');
+      return '<tr><td>'+esc(w.id)+'</td><td class="link" data-user="'+esc(w.username_lower)+'">'+esc(w.username_lower)+'</td><td>'+money(w.amount)+'</td><td><span class="pill '+cls+'">'+esc(w.status||'pending')+'</span></td><td class="muted">'+ftime(w.created_at)+'</td><td>'+act+'</td></tr>';
+    }).join(''):'<tr><td colspan="6" class="muted">No requests.</td></tr>';
+    bindUserLinks();
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-ap]'),function(b){b.onclick=function(){wdAct(b.getAttribute('data-ap'),'approve');};});
+    Array.prototype.forEach.call(tb.querySelectorAll('button[data-rj]'),function(b){b.onclick=function(){wdAct(b.getAttribute('data-rj'),'reject');};});
+  }
+  async function wdAct(id,action){var d=await api('withdrawal',{id:id,action:action});if(d.error){toast(d.error,'bad');}else{toast('#'+id+' '+action+'d','good');loadWithdrawals();}}
+
+  // ---------- TRANSACTIONS ----------
+  $('txKind').onchange=loadTx;
+  async function loadTx(){var d=await api('transactions',{kind:$('txKind').value||null,limit:120});cache.tx=d.tx||[];
+    var tb=$('txTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=cache.tx.length?cache.tx.map(function(t){return '<tr><td class="muted">'+ftime(t.created_at)+'</td><td class="link" data-user="'+esc(t.username_lower)+'">'+esc(t.username_lower)+'</td><td><span class="pill '+kindCls(t.kind)+'">'+esc(t.kind)+'</span></td><td>'+money(t.amount)+'</td><td class="mono tiny muted">'+esc(t.room_code||'—')+'</td></tr>';}).join(''):'<tr><td colspan="5" class="muted">No transactions.</td></tr>';
+    bindUserLinks();}
+  function kindCls(k){if(k==='deposit')return'play';if(k==='withdraw'||k==='withdraw_done')return'over';if(k==='withdraw_refunded')return'free';return'wait';}
+
+  // ---------- MODERATION ----------
+  async function doBan(user,reason){var d=await api('ban',{username:user,reason:reason});if(d.error)toast(d.error,'bad');else{toast('Banned '+user,'warn');closeModal();refresh();}}
+  async function doUnban(user){var d=await api('unban',{username:user});if(d.error)toast(d.error,'bad');else{toast('Unbanned '+user,'good');closeModal();refresh();}}
+  async function doFlag(user,on){var d=await api('flag',{username:user,flagged:on});if(d.error)toast(d.error,'bad');else{toast((on?'Flagged ':'Unflagged ')+user,'good');closeModal();refresh();}}
+  async function doKick(user){var d=await api('kick',{username:user});if(d.error)toast(d.error,'bad');else{toast('Kicked '+user,'warn');refresh();}}
+  async function voidGame(code){if(!confirm('Void game '+code+' and refund all stakes?'))return;var d=await api('void',{code:code});if(d.error)toast(d.error,'bad');else{toast('Voided '+code+' · refunded '+d.refunded+' to '+d.players,'good');refresh();}}
+  $('btnBan').onclick=function(){var u=$('mBanUser').value.trim();if(!u)return;if(!confirm('Ban '+u+'?'))return;doBan(u,$('mBanReason').value.trim());};
+  $('btnUnban').onclick=function(){var u=$('mBanUser').value.trim();if(u)doUnban(u);};
+  $('btnFlag').onclick=function(){var u=$('mFlagUser').value.trim();if(u)doFlag(u,true);};
+  $('btnUnflag').onclick=function(){var u=$('mFlagUser').value.trim();if(u)doFlag(u,false);};
+  $('btnNote').onclick=async function(){var u=$('mFlagUser').value.trim();if(!u){toast('Enter a username','bad');return;}var d=await api('note',{username:u,note:$('mNote').value});if(d.error)toast(d.error,'bad');else toast('Note saved for '+u,'good');};
+  $('btnVoid').onclick=function(){var c=$('mVoidCode').value.trim();if(c)voidGame(c);};
+  $('btnKick').onclick=function(){var u=$('mKickUser').value.trim();if(u)doKick(u);};
+
+  // ---------- BROADCAST ----------
+  $('btnBroadcast').onclick=async function(){var t=$('bcText').value.trim();if(!t){toast('Enter a message','bad');return;}
+    var d=await api('broadcast',{text:t,level:$('bcLevel').value});if(d.error)toast(d.error,'bad');else toast('Broadcast to '+d.sent+' players','good');};
+  $('btnClearBc').onclick=async function(){var d=await api('broadcast',{text:'',level:'info'});if(!d.error)toast('Banner cleared','good');$('bcText').value='';};
+
+  // ---------- SETTINGS ----------
+  async function loadSettings(){var d=await api('settings');var s=d.settings||{};
+    var on=/^(1|true|on|yes)$/i.test(String(s.maintenance_mode||''));
+    $('maintState').textContent=on?'ON':'OFF';$('maintState').className='pill '+(on?'ban':'off');
+    if(document.activeElement!==$('maintMsg'))$('maintMsg').value=s.maintenance_message||'';
+    var h=lastMetrics&&lastMetrics.health||{};
+    $('cfg2').innerHTML='<div class="kv">'+
+      '<div class="k">Backend</div><div>'+esc(h.backend||'—')+'</div>'+
+      '<div class="k">Node</div><div>'+esc(h.node||'—')+'</div>'+
+      '<div class="k">Geo-fence</div><div>'+(h.geoEnforce?'ON — '+esc((h.geoBlock||[]).join(', ')):'off')+'</div>'+
+      '<div class="k">Origin lock</div><div>'+(h.originLock?'ON':'off')+'</div>'+
+      '<div class="k">BTCPay</div><div>'+(h.btcpay?'connected':'off')+'</div>'+
+      '<div class="k">Tick rate</div><div>'+Math.round(1000/(h.tickMs||16.67))+' Hz</div>'+
+      '</div>';}
+  $('btnMaint').onclick=async function(){var on=$('maintState').textContent==='ON';if(!confirm((on?'Turn OFF':'Turn ON')+' maintenance mode?'))return;
+    var d=await api('setting',{key:'maintenance_mode',value:on?'false':'true'});if(d.error)toast(d.error,'bad');else{toast('Maintenance '+(on?'off':'ON'),on?'good':'warn');loadSettings();}};
+  $('btnMaintMsg').onclick=async function(){var d=await api('setting',{key:'maintenance_message',value:$('maintMsg').value});if(d.error)toast(d.error,'bad');else toast('Message saved','good');};
+
+  // ---------- AUDIT ----------
+  async function loadAudit(){var d=await api('audit');cache.audit=d.audit||[];
+    var tb=$('auditTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=cache.audit.length?cache.audit.map(function(a){return '<tr><td class="muted">'+ftime(a.created_at)+'</td><td>'+esc(a.admin)+'</td><td><span class="pill wait">'+esc(a.action)+'</span></td><td>'+esc(a.target||'—')+'</td><td class="muted tiny mono">'+esc(a.detail||'')+'</td></tr>';}).join(''):'<tr><td colspan="5" class="muted">No entries.</td></tr>';}
+
+  // ---------- credit adjuster (finance tab) ----------
+  async function adjust(sign){var u=$('cUser').value.trim(),a=parseInt($('cAmt').value,10);$('creditMsg').textContent='';
+    if(!u||!a||a<=0){$('creditMsg').textContent='Enter a username and positive amount.';return;}
+    var d=await api('credits',{username:u,delta:sign*a,reason:$('cReason').value.trim()});
+    if(d.error){$('creditMsg').style.color='#ff9a9a';$('creditMsg').textContent=d.error;}
+    else{$('creditMsg').style.color='#9fffce';$('creditMsg').textContent='✓ '+d.username+' → '+money(d.credits)+' ('+(d.delta>0?'+':'')+d.delta+')';$('cAmt').value='';toast('Adjusted '+d.username,'good');refresh();}}
+  $('btnIssue').onclick=function(){adjust(1);};$('btnRemove').onclick=function(){adjust(-1);};
+
+  // ---------- search ----------
+  var stimer=null;
+  $('q').addEventListener('input',function(){clearTimeout(stimer);var v=$('q').value.trim();if(!v){$('searchpop').classList.add('hidden');return;}stimer=setTimeout(function(){doSearch(v);},220);});
+  document.addEventListener('keydown',function(e){if(e.key==='/'&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){e.preventDefault();$('q').focus();}if(e.key==='Escape'){closeModal();$('searchpop').classList.add('hidden');}});
+  async function doSearch(v){var d=await api('search',{q:v});var list=d.users||[];
+    $('searchpop').innerHTML=list.length?list.map(function(u){return '<div class="it" data-user="'+esc(u.username)+'"><span>'+esc(u.username)+(u.banned?' <span class="pill ban">ban</span>':'')+(u.flagged?' <span class="pill flag">flag</span>':'')+'</span><span class="muted">'+money(u.credits)+'</span></div>';}).join(''):'<div class="muted tiny" style="padding:8px">No matches</div>';
+    $('searchpop').classList.remove('hidden');
+    Array.prototype.forEach.call($('searchpop').querySelectorAll('[data-user]'),function(el){el.onclick=function(){$('searchpop').classList.add('hidden');$('q').value='';openUser(el.getAttribute('data-user'));};});}
+  document.addEventListener('click',function(e){if(!$('search')&&!e.target.closest('.search'))$('searchpop').classList.add('hidden');});
+
+  // ---------- CSV export ----------
+  function csv(rows){return rows.map(function(r){return r.map(function(c){c=String(c==null?'':c);return /[",\n]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c;}).join(',');}).join('\n');}
+  function dl(name,text){var b=new Blob([text],{type:'text/csv'});var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();}
+  $('expUsers').onclick=function(){var h=[['username','credits','wins','banned','flagged','joined']];cache.users.forEach(function(u){h.push([u.username,u.credits,u.wins||0,!!u.banned,!!u.flagged,u.created_at]);});dl('players.csv',csv(h));};
+  $('expWd').onclick=function(){var h=[['id','user','amount','status','requested']];cache.wd.forEach(function(w){h.push([w.id,w.username_lower,w.amount,w.status||'pending',w.created_at]);});dl('payouts.csv',csv(h));};
+  $('expTx').onclick=function(){var h=[['when','user','kind','amount','ref']];cache.tx.forEach(function(t){h.push([t.created_at,t.username_lower,t.kind,t.amount,t.room_code||'']);});dl('transactions.csv',csv(h));};
+  $('expAudit').onclick=function(){var h=[['when','admin','action','target','detail']];cache.audit.forEach(function(a){h.push([a.created_at,a.admin,a.action,a.target||'',a.detail||'']);});dl('audit.csv',csv(h));};
 
   // ---- boot ----
-  if (token) showDash();
+  if(token)showApp();
 })();
 </script>
 </body>

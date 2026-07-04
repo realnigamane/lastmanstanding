@@ -76,6 +76,7 @@ async function registerUser(username, password) {
   if (String(password || '').length < 4) return { error: 'Password must be at least 4 characters.' };
   const key = username.toLowerCase();
   if (key === ADMIN_USER) return { error: 'That username is reserved.' };
+  if (maintenanceOn()) return { error: 'New sign-ups are paused for maintenance. Please check back soon.' };
   if (await store.getUser(key)) return { error: 'That username is already taken.' };
   const salt = crypto.randomBytes(16).toString('hex');
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
@@ -94,6 +95,9 @@ async function loginUser(username, password) {
     ok = crypto.timingSafeEqual(Buffer.from(hashPw(password, u.salt), 'hex'), Buffer.from(u.hash, 'hex'));
   } catch (e) { ok = false; }
   if (!ok) return { error: 'Incorrect password.' };
+  if (u.banned && key !== ADMIN_USER) return { error: 'This account has been suspended.' + (u.banned_reason ? ' Reason: ' + u.banned_reason : '') };
+  if (maintenanceOn() && key !== ADMIN_USER) return { error: 'Last Duck Standing is under maintenance. Please check back soon.' };
+  store.setUserFields(key, { last_seen: new Date().toISOString() }).catch(() => {});
   const token = signSession(key, key === ADMIN_USER);
   return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER };
 }
@@ -193,6 +197,199 @@ async function adminHandleWithdrawal(id, action) {
   const status = action === 'reject' ? 'rejected' : 'approved';
   await store.setWithdrawalStatus(row.id, status);
   return { ok: true, id: row.id, status, deducted: 0 };
+}
+
+// =================== Admin suite: settings, metrics, moderation ===================
+let APP_SETTINGS = {};
+async function loadSettings() { try { APP_SETTINGS = (await store.getSettings()) || {}; } catch (e) {} }
+loadSettings(); setInterval(loadSettings, 15000);
+function settingBool(k) { return /^(1|true|on|yes)$/i.test(String(APP_SETTINGS[k] || '')); }
+function maintenanceOn() { return settingBool('maintenance_mode'); }
+
+// Rolling peak of concurrent authenticated players (resets on restart).
+let peakOnline = 0;
+setInterval(() => { let n = 0; for (const s of allSessions.values()) if (s.username) n++; if (n > peakOnline) peakOnline = n; }, 5000);
+
+function adminAudit(token, action, target, detail) {
+  let admin = '?'; try { const s = readSession(token); if (s) admin = s.k; } catch (e) {}
+  store.addAudit({ admin: admin, action: action, target: target || null,
+    detail: detail == null ? null : (typeof detail === 'string' ? detail : JSON.stringify(detail)) }).catch(() => {});
+}
+
+function liveCounts() {
+  let online = 0, searching = 0, playing = 0;
+  for (const s of allSessions.values()) {
+    if (!s.username) continue; online++;
+    if (s.room) { if (s.room.phase === 'matchmaking' || s.room.phase === 'lobby') searching++; else playing++; }
+  }
+  let bots = 0, cashGames = 0, potLive = 0;
+  for (const r of rooms.values()) {
+    for (const m of r.members.values()) if (m.isBot) bots++;
+    if (r.wager > 0) { cashGames++; potLive += r.pot || 0; }
+  }
+  return { online, searching, playing, bots, cashGames, potLive };
+}
+
+function serverHealth() {
+  const mem = process.memoryUsage(); const lc = liveCounts();
+  return {
+    uptime: Math.floor(process.uptime()),
+    rss: Math.round(mem.rss / 1048576), heapUsed: Math.round(mem.heapUsed / 1048576), heapTotal: Math.round(mem.heapTotal / 1048576),
+    sessions: allSessions.size, humans: lc.online, bots: lc.bots, rooms: rooms.size,
+    node: process.version, backend: store.backend, btcpay: btcpayConfigured(),
+    geoEnforce: GEO_ENFORCE, geoBlock: [...GEO_BLOCK], originLock: ORIGIN_LOCK,
+    maintenance: maintenanceOn(), peakOnline: peakOnline, tickMs: TICK_MS, serverTime: new Date().toISOString(),
+  };
+}
+
+async function adminMetrics() {
+  const [fin, eco] = await Promise.all([
+    store.rpc('admin_finance').catch(() => ({})),
+    store.rpc('admin_economy').catch(() => ({})),
+  ]);
+  const rates = await fetchRates().catch(() => ({ btc: 0, ltc: 0 }));
+  const wds = await store.listWithdrawals().catch(() => []);
+  let pendPayoutCount = 0, pendPayoutAmt = 0;
+  for (const w of wds) if ((w.status || 'pending') === 'pending') { pendPayoutCount++; pendPayoutAmt += w.amount || 0; }
+  const depCredits = (fin && fin.deposit_credits) || 0;
+  const feeRevenue = Math.round(depCredits * (DEPOSIT_FEE / (1 - DEPOSIT_FEE)));
+  return {
+    ok: true, finance: fin || {}, economy: eco || {}, live: liveCounts(), peakOnline: peakOnline,
+    feeRevenue: feeRevenue, grossDeposits: depCredits + feeRevenue,
+    pendingPayouts: { count: pendPayoutCount, amount: pendPayoutAmt },
+    rates: rates, health: serverHealth(), serverTime: new Date().toISOString(),
+  };
+}
+
+function riskFlags(u, depSum, wdSum) {
+  const f = [];
+  if (u.banned) f.push({ level: 'danger', text: 'Account is banned' });
+  if ((u.credits || 0) >= 5000) f.push({ level: 'watch', text: 'High balance (' + (u.credits || 0) + ')' });
+  if (wdSum > depSum && wdSum > 0) f.push({ level: 'warn', text: 'Withdrawn (' + wdSum + ') exceeds deposited (' + depSum + ')' });
+  if ((u.credits || 0) > 500 && depSum === 0 && (u.wins || 0) === 0) f.push({ level: 'watch', text: 'Balance with no deposits and no wins' });
+  return f;
+}
+
+async function adminUserProfile(username) {
+  const key = String(username || '').trim().toLowerCase();
+  if (!key) return { error: 'Enter a username.' };
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  const tx = await store.listTxByUser(key).catch(() => []);
+  const allWd = await store.listWithdrawals().catch(() => []);
+  const wds = allWd.filter(w => w.username_lower === key);
+  const depSum = tx.filter(t => t.kind === 'deposit').reduce((a, t) => a + (t.amount || 0), 0);
+  const wdSum = tx.filter(t => t.kind === 'withdraw').reduce((a, t) => a + (t.amount || 0), 0);
+  const online = findOnlineByKey(key);
+  return {
+    ok: true,
+    user: {
+      username: u.username, key: key, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0),
+      created_at: u.created_at, banned: !!u.banned, banned_reason: u.banned_reason || null, banned_at: u.banned_at || null,
+      flagged: !!u.flagged, admin_note: u.admin_note || null, last_seen: u.last_seen || null,
+      online: !!online, inGame: !!(online && online.room), room: (online && online.room) ? online.room.code : null,
+      depositTotal: depSum, withdrawTotal: wdSum,
+    },
+    tx: tx.slice(0, 50), withdrawals: wds, risk: riskFlags(u, depSum, wdSum),
+  };
+}
+
+async function adminSearch(q) {
+  q = String(q || '').trim();
+  if (!q) return { ok: true, users: [] };
+  return { ok: true, users: await store.searchUsers(q, 25).catch(() => []) };
+}
+
+function findOnlineByKey(key) { return [...allSessions.values()].find(s => s.key === key); }
+
+async function adminBan(token, username, reason) {
+  const key = String(username || '').trim().toLowerCase();
+  if (!key) return { error: 'Enter a username.' };
+  if (key === ADMIN_USER) return { error: 'You cannot ban the admin account.' };
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  await store.setUserFields(key, { banned: true, banned_reason: String(reason || '').slice(0, 300) || 'No reason given', banned_at: new Date().toISOString() });
+  const s = findOnlineByKey(key);
+  if (s) { try { leaveMatch(s, true); } catch (e) {} try { s.conn.send(JSON.stringify({ t: 'banned', reason: reason || '' })); } catch (e) {} setTimeout(() => { try { s.conn.close(); } catch (e) {} }, 400); }
+  adminAudit(token, 'ban', key, { reason: reason || '' });
+  return { ok: true, username: u.username, banned: true };
+}
+async function adminUnban(token, username) {
+  const key = String(username || '').trim().toLowerCase();
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  await store.setUserFields(key, { banned: false, banned_reason: null, banned_at: null });
+  adminAudit(token, 'unban', key, null);
+  return { ok: true, username: u.username, banned: false };
+}
+async function adminSetNote(token, username, note) {
+  const key = String(username || '').trim().toLowerCase();
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  await store.setUserFields(key, { admin_note: String(note || '').slice(0, 1000) || null });
+  adminAudit(token, 'note', key, null);
+  return { ok: true, username: u.username };
+}
+async function adminSetFlag(token, username, flagged) {
+  const key = String(username || '').trim().toLowerCase();
+  const u = await store.getUser(key);
+  if (!u) return { error: 'No user named "' + username + '".' };
+  await store.setUserFields(key, { flagged: !!flagged });
+  adminAudit(token, flagged ? 'flag' : 'unflag', key, null);
+  return { ok: true, username: u.username, flagged: !!flagged };
+}
+async function adminKick(token, username) {
+  const key = String(username || '').trim().toLowerCase();
+  const s = findOnlineByKey(key);
+  if (!s) return { error: 'That player is not online.' };
+  try { leaveMatch(s, false); } catch (e) {}
+  adminAudit(token, 'kick', key, null);
+  return { ok: true, username: s.username };
+}
+async function adminVoidGame(token, code) {
+  code = String(code || '').toUpperCase();
+  const room = rooms.get(code);
+  if (!room) return { error: 'No active game "' + code + '".' };
+  let refunded = 0, players = 0;
+  for (const s of room.members.values()) {
+    if (s.isBot) continue; players++;
+    if (s.wagerPaid > 0) {
+      const k = s.key, amt = s.wagerPaid; refunded += amt;
+      try { const nc = await changeCredits(k, amt); s.credits = nc; reflectCredits(k, nc); } catch (e) {}
+    }
+    s.wagerPaid = 0; s.room = null; s.player = null; s.ready = false;
+    try { s.conn.send(JSON.stringify({ t: 'home', voided: true, credits: s.credits })); } catch (e) {}
+  }
+  try { killRoom(room); } catch (e) {}
+  rooms.delete(code);
+  adminAudit(token, 'void_game', code, { refunded: refunded, players: players });
+  return { ok: true, code: code, refunded: refunded, players: players };
+}
+function adminBroadcast(token, text, level) {
+  text = String(text || '').slice(0, 240);
+  level = ['info', 'warn', 'alert'].indexOf(level) >= 0 ? level : 'info';
+  let sent = 0;
+  const msg = JSON.stringify({ t: 'sysbanner', text: text, level: level });
+  for (const s of allSessions.values()) { if (!s.username) continue; try { s.conn.send(msg); sent++; } catch (e) {} }
+  store.setSetting('announcement', text).catch(() => {});
+  store.setSetting('announcement_active', text ? 'true' : 'false').catch(() => {});
+  store.setSetting('announcement_level', level).catch(() => {});
+  loadSettings();
+  adminAudit(token, 'broadcast', null, { text: text, level: level, sent: sent });
+  return { ok: true, sent: sent };
+}
+async function adminSetSetting(token, key, value) {
+  const allowed = ['maintenance_mode', 'maintenance_message', 'announcement', 'announcement_active', 'announcement_level'];
+  if (allowed.indexOf(key) < 0) return { error: 'Unknown setting.' };
+  await store.setSetting(key, value);
+  await loadSettings();
+  if (key === 'maintenance_mode' && settingBool('maintenance_mode')) {
+    const note = APP_SETTINGS['maintenance_message'] || 'The site is temporarily under maintenance.';
+    const msg = JSON.stringify({ t: 'sysbanner', text: '🛠 ' + note, level: 'alert' });
+    for (const s of allSessions.values()) { if (s.username && s.key !== ADMIN_USER) try { s.conn.send(msg); } catch (e) {} }
+  }
+  adminAudit(token, 'setting', key, { value: String(value) });
+  return { ok: true, settings: APP_SETTINGS };
 }
 
 // =================== BTCPay deposits ===================
@@ -715,12 +912,27 @@ const server = http.createServer((req, res) => {
             res.writeHead(403, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Not authorized.' })); return;
           }
-          let r;
-          if (req.url === '/api/admin/overview') r = adminOverview();
-          else if (req.url === '/api/admin/users') r = { ok: true, users: await store.listUsers() };
-          else if (req.url === '/api/admin/credits') r = await adminAdjustCredits(data.username, data.delta);
-          else if (req.url === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
-          else if (req.url === '/api/admin/withdrawal') r = await adminHandleWithdrawal(data.id, data.action);
+          let r; const au = req.url;
+          if (au === '/api/admin/overview') r = adminOverview();
+          else if (au === '/api/admin/metrics') r = await adminMetrics();
+          else if (au === '/api/admin/health') r = { ok: true, health: serverHealth() };
+          else if (au === '/api/admin/users') r = { ok: true, users: await store.listUsersFull(500) };
+          else if (au === '/api/admin/search') r = await adminSearch(data.q);
+          else if (au === '/api/admin/user') r = await adminUserProfile(data.username);
+          else if (au === '/api/admin/transactions') r = { ok: true, tx: await store.listAllTx(data.limit || 80, data.kind || null) };
+          else if (au === '/api/admin/credits') { r = await adminAdjustCredits(data.username, data.delta); if (r && r.ok) adminAudit(data.token, 'credits', String(data.username || '').toLowerCase(), { delta: r.delta, reason: data.reason || '' }); }
+          else if (au === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
+          else if (au === '/api/admin/withdrawal') { r = await adminHandleWithdrawal(data.id, data.action); if (r && r.ok) adminAudit(data.token, 'withdrawal_' + data.action, String(data.id), null); }
+          else if (au === '/api/admin/ban') r = await adminBan(data.token, data.username, data.reason);
+          else if (au === '/api/admin/unban') r = await adminUnban(data.token, data.username);
+          else if (au === '/api/admin/note') r = await adminSetNote(data.token, data.username, data.note);
+          else if (au === '/api/admin/flag') r = await adminSetFlag(data.token, data.username, data.flagged);
+          else if (au === '/api/admin/kick') r = await adminKick(data.token, data.username);
+          else if (au === '/api/admin/void') r = await adminVoidGame(data.token, data.code);
+          else if (au === '/api/admin/broadcast') r = adminBroadcast(data.token, data.text, data.level);
+          else if (au === '/api/admin/settings') { await loadSettings(); r = { ok: true, settings: APP_SETTINGS }; }
+          else if (au === '/api/admin/setting') r = await adminSetSetting(data.token, data.key, data.value);
+          else if (au === '/api/admin/audit') r = { ok: true, audit: await store.listAudit(150) };
           else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
           res.writeHead(r && r.error ? 400 : 200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(r)); return;
@@ -789,6 +1001,21 @@ const server = http.createServer((req, res) => {
   let file = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
   if (file === 'admin' || file === 'admin/') file = 'admin.html';   // pretty URL: /admin
   if (!STATIC.has(file)) { res.writeHead(404); res.end('Not found'); return; }
+  // Maintenance mode: show a friendly closed page for the player-facing app (the /admin portal
+  // and its client script stay reachable so the owner can still operate). Owner bypass = ?geo=SECRET.
+  if (file === 'index.html' && maintenanceOn() && !geoBypassed(req)) {
+    const note = (APP_SETTINGS['maintenance_message'] || 'We’re doing a quick tune-up. Back shortly!');
+    res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '600' });
+    res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>Under maintenance — Last Duck Standing</title>' +
+      '<style>html,body{margin:0;height:100%}body{display:flex;align-items:center;justify-content:center;' +
+      'background:radial-gradient(1000px 600px at 50% -10%,#1c2b57,transparent 60%),linear-gradient(160deg,#0a0f22,#0b1128 60%,#0a0f1f);' +
+      'color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}.b{max-width:440px;text-align:center;padding:34px}' +
+      '.d{font-size:70px}h1{font-size:23px;margin:14px 0 10px}p{color:#a9b8e0;line-height:1.6;font-size:15px}</style>' +
+      '<div class="b"><div class="d">🛠️🦆</div><h1>We’ll be right back</h1><p>' +
+      String(note).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</p></div>');
+    return;
+  }
   fs.readFile(path.join(__dirname, file), (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
@@ -1421,8 +1648,13 @@ ws.attach(server, (conn) => {
       if (!key) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
       store.getUser(key).then((u) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
+        if (u.banned && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'banned', reason: u.banned_reason || '' })); return; }
+        if (maintenanceOn() && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'maintenance', message: APP_SETTINGS['maintenance_message'] || 'The site is temporarily under maintenance.' })); return; }
         s.username = u.username; s.key = key; s.credits = u.credits;
         conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0) }));
+        if (settingBool('announcement_active') && APP_SETTINGS['announcement']) {
+          try { conn.send(JSON.stringify({ t: 'sysbanner', text: APP_SETTINGS['announcement'], level: APP_SETTINGS['announcement_level'] || 'info' })); } catch (e) {}
+        }
       }).catch((e) => {
         console.error('auth lookup failed:', e.message);
         conn.send(JSON.stringify({ t: 'authfail' }));
@@ -1432,6 +1664,7 @@ ws.attach(server, (conn) => {
     if (!s.username) return; // everything below requires auth
 
     if (m.t === 'findMatch') {
+      if (maintenanceOn() && s.key !== ADMIN_USER) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Matchmaking is paused for maintenance. Please check back soon.' })); } catch (e) {} return; }
       if (s.room) leaveMatch(s, true);                 // leave (and refund) any current queue first
       const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
       // Prefer joining an existing ready-up lobby of the same wager — you pay on READY, not on join.

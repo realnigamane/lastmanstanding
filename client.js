@@ -106,7 +106,45 @@
       $('hmResult').textContent = m.error || 'Could not start match.';
     } else if (m.t === 'withdrawResult') {
       $('wdMsg').textContent = m.ok ? ('✓ Requested ' + m.amount + ' credits — pending review') : (m.error || 'Could not submit.');
+    } else if (m.t === 'sysbanner') {
+      showSysBanner(m.text, m.level);
+    } else if (m.t === 'banned') {
+      showBlockingNotice('🚫 Account suspended', m.reason ? ('Reason: ' + m.reason) : 'Your account has been suspended. Contact support if you believe this is a mistake.');
+    } else if (m.t === 'maintenance') {
+      showBlockingNotice('🛠️ Under maintenance', m.message || 'Last Duck Standing is briefly offline for maintenance. Please check back soon.');
     }
+  }
+
+  // ---------- System banner + blocking notices (admin broadcasts / bans / maintenance) ----------
+  function showSysBanner(text, level) {
+    var el = document.getElementById('sysBanner');
+    if (!text) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'sysBanner';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9998;padding:10px 40px 10px 16px;' +
+        'font:600 13.5px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center;color:#fff;' +
+        'box-shadow:0 4px 18px rgba(0,0,0,.35)';
+      var x = document.createElement('span');
+      x.textContent = '✕'; x.style.cssText = 'position:absolute;right:14px;top:9px;cursor:pointer;opacity:.8';
+      x.onclick = function () { el.remove(); };
+      el.appendChild(document.createTextNode('')); el.appendChild(x);
+      document.body.appendChild(el);
+    }
+    var colors = { info: '#2b5fff', warn: '#c9820e', alert: '#c02a4a' };
+    el.style.background = colors[level] || colors.info;
+    el.firstChild.textContent = text + '  ';
+  }
+  function showBlockingNotice(title, body) {
+    try { if (ws) ws.close(); } catch (e) {}
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+      'background:rgba(6,10,24,.94);color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px';
+    o.innerHTML = '<div style="max-width:420px;text-align:center">' +
+      '<div style="font-size:24px;font-weight:800;margin-bottom:12px"></div>' +
+      '<div style="color:#a9b8e0;line-height:1.6;font-size:15px"></div></div>';
+    o.firstChild.children[0].textContent = title;
+    o.firstChild.children[1].textContent = body;
+    document.body.appendChild(o);
   }
 
   // ---------- Auth ----------

@@ -174,12 +174,118 @@ async function fileListTxByUser(key) {
   return txs.filter(t => t.username_lower === key).slice().reverse();
 }
 
+// ================= Admin suite data layer =================
+const USER_FULL_COLS = 'username,username_lower,credits,wins,created_at,banned,banned_reason,banned_at,admin_note,flagged,last_seen';
+// ---- Supabase ----
+async function sbListUsersFull(limit) {
+  const url = SB_URL + '/rest/v1/' + TABLE + '?select=' + USER_FULL_COLS + '&order=credits.desc&limit=' + (limit || 500);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listUsersFull ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbSearchUsers(q, limit) {
+  const enc = encodeURIComponent('*' + String(q).toLowerCase() + '*');
+  const url = SB_URL + '/rest/v1/' + TABLE + '?username_lower=ilike.' + enc + '&select=' + USER_FULL_COLS + '&order=credits.desc&limit=' + (limit || 25);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase searchUsers ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbSetUserFields(key, fields) {
+  const url = SB_URL + '/rest/v1/' + TABLE + '?username_lower=eq.' + encodeURIComponent(key);
+  const r = await fetch(url, { method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(fields) });
+  if (!r.ok) throw new Error('Supabase setUserFields ' + r.status + ': ' + (await r.text()));
+}
+async function sbAddAudit(row) {
+  const r = await fetch(SB_URL + '/rest/v1/admin_audit', { method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(row) });
+  if (!r.ok) throw new Error('Supabase addAudit ' + r.status + ': ' + (await r.text()));
+}
+async function sbListAudit(limit) {
+  const url = SB_URL + '/rest/v1/admin_audit?select=*&order=created_at.desc&limit=' + (limit || 150);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listAudit ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbGetSettings() {
+  const r = await fetch(SB_URL + '/rest/v1/app_settings?select=key,value', { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase getSettings ' + r.status + ': ' + (await r.text()));
+  const rows = await r.json(); const o = {}; for (const x of rows) o[x.key] = x.value; return o;
+}
+async function sbSetSetting(key, value) {
+  const r = await fetch(SB_URL + '/rest/v1/app_settings', {
+    method: 'POST', headers: sbHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify({ key: key, value: String(value), updated_at: new Date().toISOString() }),
+  });
+  if (!r.ok) throw new Error('Supabase setSetting ' + r.status + ': ' + (await r.text()));
+}
+async function sbListAllTx(limit, kind) {
+  let url = SB_URL + '/rest/v1/game_transactions?select=*&order=created_at.desc&limit=' + (limit || 100);
+  if (kind) url += '&kind=eq.' + encodeURIComponent(kind);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listAllTx ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbRpc(fn) {
+  const r = await fetch(SB_URL + '/rest/v1/rpc/' + fn, { method: 'POST', headers: sbHeaders(), body: '{}' });
+  if (!r.ok) throw new Error('Supabase rpc ' + fn + ' ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+// ---- File ----
+async function fileListUsersFull(limit) {
+  return Object.values(users).map(u => ({
+    username: u.username, username_lower: u.username_lower, credits: u.credits, wins: u.wins || 0,
+    created_at: u.created_at, banned: !!u.banned, banned_reason: u.banned_reason || null, banned_at: u.banned_at || null,
+    admin_note: u.admin_note || null, flagged: !!u.flagged, last_seen: u.last_seen || null,
+  })).sort((a, b) => (b.credits || 0) - (a.credits || 0)).slice(0, limit || 500);
+}
+async function fileSearchUsers(q, limit) {
+  q = String(q).toLowerCase();
+  return (await fileListUsersFull(9999)).filter(u => u.username_lower.indexOf(q) >= 0).slice(0, limit || 25);
+}
+async function fileSetUserFields(key, fields) { if (users[key]) { Object.assign(users[key], fields); saveUsers(); } }
+const AUDIT_FILE = path.join(DATA_DIR, 'audit.json');
+let audit = []; try { audit = JSON.parse(fs.readFileSync(AUDIT_FILE, 'utf8')); } catch (e) { audit = []; }
+async function fileAddAudit(row) {
+  audit.push(Object.assign({ id: audit.length + 1, created_at: new Date().toISOString() }, row));
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(AUDIT_FILE, JSON.stringify(audit, null, 2)); } catch (e) {}
+}
+async function fileListAudit(limit) { return audit.slice().reverse().slice(0, limit || 150); }
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+let settings = {}; try { settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); } catch (e) { settings = {}; }
+async function fileGetSettings() { return Object.assign({}, settings); }
+async function fileSetSetting(key, value) {
+  settings[key] = String(value);
+  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2)); } catch (e) {}
+}
+async function fileListAllTx(limit, kind) {
+  let a = txs.slice().reverse(); if (kind) a = a.filter(t => t.kind === kind); return a.slice(0, limit || 100);
+}
+async function fileRpc(fn) {
+  if (fn === 'admin_finance') {
+    const g = k => txs.filter(t => t.kind === k); const s = arr => arr.reduce((x, t) => x + (t.amount || 0), 0);
+    return { deposit_count: g('deposit').length, deposit_credits: s(g('deposit')), deposit_pending_count: g('deposit_pending').length,
+      deposit_pending_amt: s(g('deposit_pending')), withdraw_count: g('withdraw').length, withdraw_amt: s(g('withdraw')),
+      withdraw_done_amt: s(g('withdraw_done')), refunded_amt: s(g('withdraw_refunded')), tx_24h: txs.length };
+  }
+  if (fn === 'admin_economy') {
+    const arr = Object.values(users); const s = arr.reduce((x, u) => x + (u.credits || 0), 0);
+    return { user_count: arr.length, total_credits: s, banned_count: arr.filter(u => u.banned).length,
+      flagged_count: arr.filter(u => u.flagged).length, avg_credits: arr.length ? Math.round(s / arr.length) : 0,
+      max_credits: arr.reduce((m, u) => Math.max(m, u.credits || 0), 0), total_wins: arr.reduce((x, u) => x + (u.wins || 0), 0), new_users_24h: 0 };
+  }
+  return {};
+}
+
+const adminSb = { listUsersFull: sbListUsersFull, searchUsers: sbSearchUsers, setUserFields: sbSetUserFields,
+  addAudit: sbAddAudit, listAudit: sbListAudit, getSettings: sbGetSettings, setSetting: sbSetSetting, listAllTx: sbListAllTx, rpc: sbRpc };
+const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUsers, setUserFields: fileSetUserFields,
+  addAudit: fileAddAudit, listAudit: fileListAudit, getSettings: fileGetSettings, setSetting: fileSetSetting, listAllTx: fileListAllTx, rpc: fileRpc };
+
 module.exports = useSupabase
-  ? { backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
+  ? Object.assign({ backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
       recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
       listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus,
-      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }
-  : { backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
+      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }, adminSb)
+  : Object.assign({ backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
       recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
       listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus,
-      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser };
+      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser }, adminFile);
