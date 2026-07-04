@@ -239,6 +239,10 @@ async function sbAddTaxEvent(row) {
   const r = await fetch(SB_URL + '/rest/v1/tax_events', { method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(row) });
   if (!r.ok) throw new Error('Supabase addTaxEvent ' + r.status + ': ' + (await r.text()));
 }
+async function sbUpdateTaxEvent(id, fields) {
+  const r = await fetch(SB_URL + '/rest/v1/tax_events?id=eq.' + encodeURIComponent(id), { method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(fields) });
+  if (!r.ok) throw new Error('Supabase updateTaxEvent ' + r.status + ': ' + (await r.text()));
+}
 // ---- File ----
 async function fileListUsersFull(limit) {
   return Object.values(users).map(u => ({
@@ -276,6 +280,10 @@ async function fileAddTaxEvent(row) {
   taxEvents.push(Object.assign({ id: taxEvents.length + 1, occurred_at: new Date().toISOString() }, row));
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(TAX_FILE, JSON.stringify(taxEvents, null, 2)); } catch (e) {}
 }
+async function fileUpdateTaxEvent(id, fields) {
+  const row = taxEvents.find(t => String(t.id) === String(id));
+  if (row) { Object.assign(row, fields); try { fs.writeFileSync(TAX_FILE, JSON.stringify(taxEvents, null, 2)); } catch (e) {} }
+}
 async function fileRpc(fn) {
   if (fn === 'admin_finance') {
     const g = k => txs.filter(t => t.kind === k); const s = arr => arr.reduce((x, t) => x + (t.amount || 0), 0);
@@ -300,10 +308,10 @@ async function fileRpc(fn) {
 
 const adminSb = { listUsersFull: sbListUsersFull, searchUsers: sbSearchUsers, setUserFields: sbSetUserFields,
   addAudit: sbAddAudit, listAudit: sbListAudit, getSettings: sbGetSettings, setSetting: sbSetSetting, listAllTx: sbListAllTx, rpc: sbRpc,
-  listTaxEvents: sbListTaxEvents, addTaxEvent: sbAddTaxEvent };
+  listTaxEvents: sbListTaxEvents, addTaxEvent: sbAddTaxEvent, updateTaxEvent: sbUpdateTaxEvent };
 const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUsers, setUserFields: fileSetUserFields,
   addAudit: fileAddAudit, listAudit: fileListAudit, getSettings: fileGetSettings, setSetting: fileSetSetting, listAllTx: fileListAllTx, rpc: fileRpc,
-  listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent };
+  listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent, updateTaxEvent: fileUpdateTaxEvent };
 
 module.exports = useSupabase
   ? Object.assign({ backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,

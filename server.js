@@ -282,6 +282,32 @@ async function taxSummary(finMaybe) {
 async function adminTax() {
   return { ok: true, summary: await taxSummary(), events: await store.listTaxEvents(1000).catch(() => []) };
 }
+// One-time (re-runnable) backfill: fill coin / crypto amount / market price on older ledger rows by
+// looking the deposit invoice or withdrawal payout back up in BTCPay (which still has the records).
+async function adminTaxBackfill(token) {
+  if (!btcpayConfigured()) return { error: 'BTCPay is not configured, so historical prices cannot be recovered.' };
+  const events = await store.listTaxEvents(2000).catch(() => []);
+  let checked = 0, updated = 0;
+  for (const e of events) {
+    if (e.coin && e.market_price != null && e.crypto_amount != null) continue;   // already complete
+    if (!e.ref) continue;
+    checked++;
+    try {
+      let coin = null, cryptoAmt = null, price = null;
+      if (e.kind === 'deposit') {
+        const pms = await btcpayGetInvoicePMs(e.ref);
+        const paid = (pms || []).find(p => Number(p.totalPaid || p.paymentMethodPaid || p.paid || 0) > 0) || (pms || [])[0];
+        if (paid) { coin = pmCoin(paid); const c = Number(paid.totalPaid || paid.paymentMethodPaid || paid.paid || paid.amount || paid.due || 0); cryptoAmt = c > 0 ? c : null; price = (paid.rate != null && paid.rate !== '') ? Number(paid.rate) : (c > 0 ? Math.round(e.usd_value / c) : null); }
+      } else {
+        const p = await btcpayGetPayout(e.ref);
+        if (p) { coin = pmCoin(p); const c = Number(p.paymentMethodAmount || p.cryptoAmount || p.amount || 0); cryptoAmt = c > 0 ? c : null; price = (c > 0) ? Math.round(e.usd_value / c) : null; }
+      }
+      if (coin || cryptoAmt || price != null) { await store.updateTaxEvent(e.id, { coin: coin, crypto_amount: cryptoAmt, market_price: price }); updated++; }
+    } catch (err) {}
+  }
+  adminAudit(token, 'tax_backfill', null, { checked: checked, updated: updated });
+  return { ok: true, checked: checked, updated: updated };
+}
 
 function riskFlags(u, depSum, wdSum) {
   const f = [];
@@ -721,8 +747,22 @@ async function handleBtcpayWebhook(req, rawBody) {
       const newC = await changeCredits(key, credited);
       reflectCredits(key, newC);
       await store.addTx({ username_lower: key, kind: 'deposit', amount: credited, room_code: ev.invoiceId });
-      // Tax ledger: record the deposit at GROSS value received (income), with a live BTC price reference.
-      try { const rt = await fetchRates(); await store.addTaxEvent({ kind: 'deposit', username_lower: key, coin: null, crypto_amount: null, usd_value: amt, market_price: (rt && rt.btc) || null, ref: String(ev.invoiceId) }); } catch (e) {}
+      // Tax ledger: record the deposit at GROSS value received (income). Pull the ACTUAL coin, crypto
+      // amount, and exchange rate BTCPay used from the invoice's payment methods (fall back to the live
+      // rate only if BTCPay doesn't return one).
+      try {
+        let coin = null, cryptoAmt = null, price = null;
+        const pms = await btcpayGetInvoicePMs(ev.invoiceId);
+        const paid = (pms || []).find(p => Number(p.totalPaid || p.paymentMethodPaid || p.paid || 0) > 0) || (pms || [])[0];
+        if (paid) {
+          coin = pmCoin(paid);
+          const c = Number(paid.totalPaid || paid.paymentMethodPaid || paid.paid || paid.amount || paid.due || 0);
+          cryptoAmt = c > 0 ? c : null;
+          price = paid.rate != null && paid.rate !== '' ? Number(paid.rate) : null;
+        }
+        if (price == null) { const rt = await fetchRates(); price = coin === 'LTC' ? (rt && rt.ltc) : (rt && rt.btc); }
+        await store.addTaxEvent({ kind: 'deposit', username_lower: key, coin: coin, crypto_amount: cryptoAmt, usd_value: amt, market_price: price || null, ref: String(ev.invoiceId) });
+      } catch (e) {}
     }
   }
   // Payout was cancelled -> refund the player's escrowed credits (idempotent).
@@ -949,6 +989,7 @@ const server = http.createServer((req, res) => {
           else if (au === '/api/admin/transactions') r = { ok: true, tx: await store.listAllTx(data.limit || 80, data.kind || null) };
           else if (au === '/api/admin/revenue') r = { ok: true, series: await store.rpc('admin_revenue_series').catch(() => []) };
           else if (au === '/api/admin/tax') r = await adminTax();
+          else if (au === '/api/admin/tax/backfill') r = await adminTaxBackfill(data.token);
           else if (au === '/api/admin/credits') { r = await adminAdjustCredits(data.username, data.delta); if (r && r.ok) adminAudit(data.token, 'credits', String(data.username || '').toLowerCase(), { delta: r.delta, reason: data.reason || '' }); }
           else if (au === '/api/admin/withdrawals') r = { ok: true, withdrawals: await store.listWithdrawals() };
           else if (au === '/api/admin/withdrawal') { r = await adminHandleWithdrawal(data.id, data.action); if (r && r.ok) adminAudit(data.token, 'withdrawal_' + data.action, String(data.id), null); }

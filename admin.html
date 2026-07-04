@@ -279,7 +279,7 @@
           <span id="taxRateMsg" class="tiny"></span>
         </div>
       </div>
-      <div class="card"><h3>Tax event ledger <span class="r"><button class="ghost sm" id="expTaxCsv">⬇ CSV</button> <button class="sm" id="expTaxPdf">⬇ PDF</button></span></h3>
+      <div class="card"><h3>Tax event ledger <span class="r"><button class="ghost sm" id="btnTaxBackfill" title="Recover coin, crypto amount and price for older rows from BTCPay">↺ Backfill</button> <button class="ghost sm" id="expTaxCsv">⬇ CSV</button> <button class="sm" id="expTaxPdf">⬇ PDF</button></span></h3>
         <div class="scroll"><table id="taxTbl"><thead><tr>
           <th>When</th><th>Type</th><th>User</th><th>USD value</th><th>Coin</th><th>Crypto</th><th>Market price</th>
         </tr></thead><tbody></tbody></table></div>
@@ -629,7 +629,8 @@
   }
   $('btnTaxRate').onclick=async function(){var v=parseFloat($('taxRate').value);if(!(v>=0&&v<=100)){toast('Enter 0–100','bad');return;}
     var d=await api('setting',{key:'tax_rate',value:String(v/100)});if(d.error)toast(d.error,'bad');else{toast('Tax rate set to '+v+'%','good');loadTax();refresh();}};
-  $('expTaxCsv').onclick=function(){var h=[['when','type','user','usd_value','coin','crypto_amount','market_price_usd']];(cache.tax_events||[]).forEach(function(e){h.push([e.occurred_at,e.kind,e.username_lower||'',e.usd_value,e.coin||'',e.crypto_amount!=null?e.crypto_amount:'',e.market_price!=null?e.market_price:'']);});dl('tax-events.csv',csv(h));};
+  $('btnTaxBackfill').onclick=async function(){toast('Backfilling from BTCPay…');var d=await api('tax/backfill');if(d.error)toast(d.error,'bad');else{toast('Backfilled '+d.updated+' of '+d.checked+' rows','good');loadTax();}};
+  $('expTaxCsv').onclick=function(){var h=[['datetime_iso','type','user','usd_value','coin','crypto_amount','market_price_usd']];(cache.tax_events||[]).forEach(function(e){h.push([e.occurred_at,e.kind,e.username_lower||'',e.usd_value,e.coin||'',e.crypto_amount!=null?e.crypto_amount:'',e.market_price!=null?e.market_price:'']);});dl('tax-events.csv',csv(h));};
   $('expTaxPdf').onclick=function(){
     if(!window.jspdf||!window.jspdf.jsPDF){toast('PDF library still loading — try again','bad');return;}
     var s=cache.tax_summary||{},ev=cache.tax_events||[];
