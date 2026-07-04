@@ -538,7 +538,50 @@ async function fetchRates() {
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
 
+// ===== Geo-fencing: block real-money-prohibited regions (US + territories by default). =====
+// Configurable without a redeploy via the GEO_BLOCK env var (comma-separated ISO country codes).
+const GEO_BLOCK = new Set(String(process.env.GEO_BLOCK || 'US,PR,GU,VI,AS,MP,UM')
+  .split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+// Owner/staff bypass secret: visiting with ?geo=SECRET drops a cookie so you (even in a blocked
+// region) keep full access to your own site. Set GEO_BYPASS in the Render env to enable it.
+const GEO_BYPASS = process.env.GEO_BYPASS || '';
+function geoBypassed(req) {
+  if (!GEO_BYPASS) return false;
+  if ((req.url || '').indexOf('geo=' + GEO_BYPASS) >= 0) return true;
+  return String(req.headers.cookie || '').indexOf('geo=' + GEO_BYPASS) >= 0;
+}
+// Cloudflare stamps CF-IPCountry on every proxied request. We block only EXPLICIT matches — a missing
+// header (Render's internal health check, or any direct-to-origin hit) is left alone so the app never
+// self-locks. The Cloudflare edge rule is the primary enforcer; this app check is defense-in-depth.
+// Master switch — the block does nothing until GEO_ENFORCE is turned on in the env. Lets us deploy
+// the code safely, set the bypass, then flip enforcement on without any risk of self-lockout.
+const GEO_ENFORCE = /^(1|true|on|yes)$/i.test(String(process.env.GEO_ENFORCE || ''));
+function geoBlocked(req) {
+  if (!GEO_ENFORCE) return false;
+  const c = String(req.headers['cf-ipcountry'] || '').toUpperCase();
+  if (!c || !GEO_BLOCK.has(c)) return false;
+  return !geoBypassed(req);
+}
+const GEO_BLOCK_PAGE = '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Not available in your region</title>' +
+  '<style>html,body{margin:0;height:100%}body{display:flex;align-items:center;justify-content:center;' +
+  'background:#0b1020;color:#e6ecff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}' +
+  '.b{max-width:440px;text-align:center;padding:32px}.b h1{font-size:22px;margin:0 0 10px}' +
+  '.b p{color:#9fb0d8;line-height:1.5;font-size:15px;margin:0}</style></head>' +
+  '<body><div class="b"><h1>🦆 Not available in your region</h1>' +
+  '<p>Last Duck Standing isn’t available where you are. Thanks for stopping by.</p></div></body></html>';
+
 const server = http.createServer((req, res) => {
+  // Owner bypass: hitting any URL with ?geo=SECRET remembers you via a 1-year cookie.
+  if (GEO_BYPASS && (req.url || '').indexOf('geo=' + GEO_BYPASS) >= 0) {
+    res.setHeader('Set-Cookie', 'geo=' + GEO_BYPASS + '; Max-Age=31536000; Path=/; SameSite=Lax');
+  }
+  // Geo-fence everything except the payment webhook (which comes from the BTCPay server, not a player).
+  if (req.url !== '/api/btcpay/webhook' && geoBlocked(req)) {
+    res.writeHead(451, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(GEO_BLOCK_PAGE);
+    return;
+  }
   if (req.method === 'POST' && req.url.startsWith('/api/')) {
     let body = '';
     req.on('data', (c) => { body += c; if (body.length > 10000) req.destroy(); });
@@ -1340,7 +1383,7 @@ ws.attach(server, (conn) => {
     leaveMatch(s, true);
     allSessions.delete(s.id);
   });
-});
+}, geoBlocked);   // gate: refuse WebSocket upgrades from geo-blocked regions
 
 server.listen(PORT, () => {
   console.log('Last Duck Standing running at  http://localhost:' + PORT);

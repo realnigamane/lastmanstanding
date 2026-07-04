@@ -113,10 +113,11 @@ class Conn extends EventEmitter {
 }
 
 // Attach to an http.Server: handles the upgrade handshake, calls onConn(conn).
-function attach(server, onConn) {
+function attach(server, onConn, gate) {
   server.on('upgrade', (req, socket) => {
     const key = req.headers['sec-websocket-key'];
     if (!key) { socket.destroy(); return; }
+    if (typeof gate === 'function' && gate(req)) { socket.destroy(); return; }   // e.g. geo-block
     const accept = makeAcceptKey(key);
     socket.write(
       'HTTP/1.1 101 Switching Protocols\r\n' +
