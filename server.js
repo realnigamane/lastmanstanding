@@ -69,22 +69,106 @@ function readSession(token) {
 }
 const sessionKey = (token) => { const s = readSession(token); return s ? s.k : null; };
 
-async function registerUser(username, password) {
+// ===== Email verification (Mailgun, zero-dependency HTTP) =====
+const MAILGUN_KEY = process.env.MAILGUN_API_KEY || '';
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN || '';
+const MAIL_FROM = process.env.MAIL_FROM || ('Last Duck Standing <no-reply@' + (MAILGUN_DOMAIN || 'lastduckstanding.io') + '>');
+const MAIL_HOST = /eu/i.test(process.env.MAILGUN_REGION || '') ? 'api.eu.mailgun.net' : 'api.mailgun.net';
+const SITE_URL = (process.env.SITE_URL || 'https://lastduckstanding.io').replace(/\/+$/, '');
+// Email verification only turns ON once Mailgun is configured — until then nobody is blocked.
+const EMAIL_ON = !!(MAILGUN_KEY && MAILGUN_DOMAIN);
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function validEmail(e) { e = String(e || '').trim(); return e.length >= 5 && e.length <= 120 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
+async function mailgunSend(to, subject, html) {
+  if (!EMAIL_ON) return false;
+  const body = new URLSearchParams({ from: MAIL_FROM, to: to, subject: subject, html: html });
+  const r = await fetch('https://' + MAIL_HOST + '/v3/' + MAILGUN_DOMAIN + '/messages', {
+    method: 'POST',
+    headers: { 'Authorization': 'Basic ' + Buffer.from('api:' + MAILGUN_KEY).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  if (!r.ok) { console.error('mailgun send', r.status, await r.text().catch(() => '')); return false; }
+  return true;
+}
+function verifyEmailHtml(username, link) {
+  return '<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0b1020">' +
+    '<h2 style="margin:0 0 6px">🦆 Verify your email</h2>' +
+    '<p>Hi ' + escapeHtml(username) + ', confirm your email to enable withdrawals on Last Duck Standing.</p>' +
+    '<p style="margin:22px 0"><a href="' + link + '" style="background:#5a6cff;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700;display:inline-block">Verify email</a></p>' +
+    '<p style="color:#667;font-size:13px">Or paste this link into your browser:<br>' + link + '</p>' +
+    '<p style="color:#889;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not sign up, you can ignore this email.</p></div>';
+}
+async function sendVerification(user) {
+  if (!EMAIL_ON || !user.email || !user.email_verify_token) return;
+  const link = SITE_URL + '/verify?u=' + encodeURIComponent(user.username_lower) + '&t=' + encodeURIComponent(user.email_verify_token);
+  try { await mailgunSend(user.email, 'Verify your email — Last Duck Standing', verifyEmailHtml(user.username, link)); }
+  catch (e) { console.error('sendVerification', e.message); }
+}
+function verifyResultPage(ok, msg) {
+  return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Email verification — Last Duck Standing</title>' +
+    '<style>html,body{margin:0;height:100%}body{display:flex;align-items:center;justify-content:center;' +
+    'background:radial-gradient(1000px 600px at 50% -10%,#1c2b57,transparent 60%),linear-gradient(160deg,#0a0f22,#0b1128 60%,#0a0f1f);' +
+    'color:#eaf0ff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}.b{max-width:440px;text-align:center;padding:34px}' +
+    '.d{font-size:64px}h1{font-size:22px;margin:12px 0 10px}p{color:#a9b8e0;line-height:1.6;font-size:15px}' +
+    'a{display:inline-block;margin-top:18px;background:#5a6cff;color:#fff;text-decoration:none;padding:11px 20px;border-radius:10px;font-weight:700}</style>' +
+    '<div class="b"><div class="d">' + (ok ? '✅🦆' : '⚠️🦆') + '</div><h1>' + (ok ? 'Email verified' : 'Verification problem') + '</h1>' +
+    '<p>' + escapeHtml(msg) + '</p><a href="' + SITE_URL + '/">Go to Last Duck Standing</a></div>';
+}
+async function handleVerifyEmail(u, t) {
+  const key = String(u || '').trim().toLowerCase();
+  const bad = (m) => verifyResultPage(false, m);
+  try {
+    if (!key || !t) return bad('This verification link is invalid.');
+    const user = await store.getUser(key);
+    if (!user) return bad('This verification link is invalid.');
+    if (user.email_verified) return verifyResultPage(true, 'Your email is already verified — you are all set.');
+    if (!user.email_verify_token || user.email_verify_token !== t) return bad('This link is invalid or has already been used.');
+    if (user.email_verify_sent_at && (Date.now() - new Date(user.email_verify_sent_at).getTime() > 24 * 3600 * 1000)) return bad('This link has expired. Request a new one from your dashboard.');
+    await store.setUserFields(key, { email_verified: true, email_verify_token: null });
+    const s = findOnlineByKey(key);
+    if (s) { s.emailVerified = true; try { s.conn.send(JSON.stringify({ t: 'emailVerified' })); } catch (e) {} }
+    return verifyResultPage(true, 'Your email is verified — withdrawals are now enabled. You can close this tab and head back to the game.');
+  } catch (e) { return bad('Something went wrong verifying your email. Please try again.'); }
+}
+async function handleResendVerification(token) {
+  if (!EMAIL_ON) return { error: 'Email verification is not enabled yet.' };
+  const key = sessionKey(token);
+  if (!key) return { error: 'Please log in again.' };
+  const user = await store.getUser(key);
+  if (!user) return { error: 'Account not found.' };
+  if (user.email_verified) return { ok: true, already: true };
+  if (!user.email) return { error: 'No email on file for this account.' };
+  const vtoken = crypto.randomBytes(24).toString('hex');
+  await store.setUserFields(key, { email_verify_token: vtoken, email_verify_sent_at: new Date().toISOString() });
+  await sendVerification({ username: user.username, username_lower: key, email: user.email, email_verify_token: vtoken });
+  return { ok: true };
+}
+
+async function registerUser(username, password, email) {
   username = String(username || '').trim();
   if (username.length < 3 || username.length > 16) return { error: 'Username must be 3-16 characters.' };
   if (!/^[a-zA-Z0-9_]+$/.test(username)) return { error: 'Use letters, numbers, and underscores only.' };
   if (String(password || '').length < 4) return { error: 'Password must be at least 4 characters.' };
+  email = String(email || '').trim().toLowerCase();
+  if (!validEmail(email)) return { error: 'Enter a valid email address.' };
   const key = username.toLowerCase();
   if (key === ADMIN_USER) return { error: 'That username is reserved.' };
   if (maintenanceOn()) return { error: 'New sign-ups are paused for maintenance. Please check back soon.' };
   if (await store.getUser(key)) return { error: 'That username is already taken.' };
+  try { if (await store.findByEmail(email)) return { error: 'That email is already in use.' }; } catch (e) {}
   const salt = crypto.randomBytes(16).toString('hex');
+  const verified = !EMAIL_ON;                                  // no Mailgun yet -> don't block anyone
+  const vtoken = EMAIL_ON ? crypto.randomBytes(24).toString('hex') : null;
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
-                 credits: 0, wins: 0, created_at: new Date().toISOString() };
+                 credits: 0, wins: 0, created_at: new Date().toISOString(),
+                 email: email, email_verified: verified, email_verify_token: vtoken,
+                 email_verify_sent_at: EMAIL_ON ? new Date().toISOString() : null };
   try { await store.createUser(user); }
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
+  if (EMAIL_ON) sendVerification(user).catch(() => {});
   const token = signSession(key, key === ADMIN_USER);
-  return { ok: true, token, username, credits: 0 };
+  return { ok: true, token, username, credits: 0, email_verified: verified, emailPending: EMAIL_ON };
 }
 async function loginUser(username, password) {
   const key = String(username || '').trim().toLowerCase();
@@ -99,7 +183,8 @@ async function loginUser(username, password) {
   if (maintenanceOn() && key !== ADMIN_USER) return { error: 'Last Duck Standing is under maintenance. Please check back soon.' };
   store.setUserFields(key, { last_seen: new Date().toISOString() }).catch(() => {});
   const token = signSession(key, key === ADMIN_USER);
-  return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER };
+  return { ok: true, token, username: u.username, credits: u.credits, admin: key === ADMIN_USER,
+           email_verified: !!u.email_verified, emailPending: EMAIL_ON && !u.email_verified };
 }
 
 // =================== Credit safety (atomic, per-user) ===================
@@ -676,6 +761,10 @@ async function handleHistory(token) {
 async function handleWithdrawCreate(token, amount, coin, address) {
   const key = sessionKey(token);
   if (!key) return { error: 'Please log in again.' };
+  if (EMAIL_ON) {
+    const uu = await store.getUser(key);
+    if (uu && !uu.email_verified) return { error: 'Please verify your email before withdrawing. Check your inbox, or resend the link from your dashboard.', needVerify: true };
+  }
   amount = Math.floor(Number(amount) || 0);
   coin = (coin === 'LTC' || coin === 'BTC') ? coin : null;
   address = String(address || '').trim();
@@ -968,6 +1057,7 @@ const server = http.createServer((req, res) => {
       if ((req.url === '/api/register' && rateLimited(ip, 'register', 30, 3600000)) ||
           (req.url === '/api/login' && rateLimited(ip, 'login', 20, 600000)) ||
           (req.url === '/api/withdraw/create' && rateLimited(ip, 'withdraw', 8, 3600000)) ||
+          (req.url === '/api/resend-verification' && rateLimited(ip, 'resend', 5, 3600000)) ||
           (req.url === '/api/deposit/create' && rateLimited(ip, 'deposit', 30, 3600000))) {
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Too many requests — wait a moment and try again.' })); return;
@@ -1008,8 +1098,9 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify(r)); return;
         }
         let result;
-        if (req.url === '/api/register') result = await registerUser(data.username, data.password);
+        if (req.url === '/api/register') result = await registerUser(data.username, data.password, data.email);
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
+        else if (req.url === '/api/resend-verification') result = await handleResendVerification(data.token);
         else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
         else if (req.url === '/api/deposit/details') result = await handleDepositDetails(data.token, data.invoice);
         else if (req.url === '/api/withdraw/create') result = await handleWithdrawCreate(data.token, data.amount, data.coin, data.address);
@@ -1023,6 +1114,15 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ error: 'Server/database error. Check the server console.' }));
       }
     });
+    return;
+  }
+  // Email verification link (clicked from the Mailgun email).
+  if (req.method === 'GET' && req.url.split('?')[0] === '/verify') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    handleVerifyEmail(q.get('u'), q.get('t')).then((html) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(html);
+    }).catch(() => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(verifyResultPage(false, 'Something went wrong. Please try again.')); });
     return;
   }
   // Live crypto prices for the deposit/withdraw converters.
@@ -1720,8 +1820,8 @@ ws.attach(server, (conn) => {
         if (!u) { conn.send(JSON.stringify({ t: 'authfail' })); return; }
         if (u.banned && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'banned', reason: u.banned_reason || '' })); return; }
         if (maintenanceOn() && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'maintenance', message: APP_SETTINGS['maintenance_message'] || 'The site is temporarily under maintenance.' })); return; }
-        s.username = u.username; s.key = key; s.credits = u.credits;
-        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0) }));
+        s.username = u.username; s.key = key; s.credits = u.credits; s.emailVerified = !!u.email_verified;
+        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0), emailVerified: !!u.email_verified, emailPending: EMAIL_ON && !u.email_verified }));
         if (settingBool('announcement_active') && APP_SETTINGS['announcement']) {
           try { conn.send(JSON.stringify({ t: 'sysbanner', text: APP_SETTINGS['announcement'], level: APP_SETTINGS['announcement_level'] || 'info' })); } catch (e) {}
         }

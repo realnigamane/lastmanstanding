@@ -29,6 +29,13 @@ async function sbGetUser(key) {
   const rows = await r.json();
   return rows[0] || null;
 }
+async function sbFindByEmail(email) {
+  const url = SB_URL + '/rest/v1/' + TABLE + '?email=eq.' + encodeURIComponent(email) + '&select=username_lower&limit=1';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase findByEmail ' + r.status + ': ' + (await r.text()));
+  const rows = await r.json();
+  return rows[0] || null;
+}
 async function sbCreateUser(u) {
   const r = await fetch(SB_URL + '/rest/v1/' + TABLE, {
     method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(u),
@@ -123,6 +130,10 @@ async function fileGetUser(key) { return users[key] || null; }
 async function fileCreateUser(u) {
   if (users[u.username_lower]) throw new Error('DUPLICATE');
   users[u.username_lower] = u; saveUsers();
+}
+async function fileFindByEmail(email) {
+  email = String(email || '').toLowerCase();
+  return Object.values(users).find(u => String(u.email || '').toLowerCase() === email) || null;
 }
 async function fileUpdateCredits(key, credits) {
   if (users[key]) { users[key].credits = credits; saveUsers(); }
@@ -314,11 +325,11 @@ const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUse
   listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent, updateTaxEvent: fileUpdateTaxEvent };
 
 module.exports = useSupabase
-  ? Object.assign({ backend: 'supabase', getUser: sbGetUser, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
+  ? Object.assign({ backend: 'supabase', getUser: sbGetUser, findByEmail: sbFindByEmail, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
       recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
       listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus,
       txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }, adminSb)
-  : Object.assign({ backend: 'file', getUser: fileGetUser, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
+  : Object.assign({ backend: 'file', getUser: fileGetUser, findByEmail: fileFindByEmail, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
       recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
       listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus,
       txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser }, adminFile);

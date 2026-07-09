@@ -6,6 +6,7 @@
 
   let ws = null, wsReady = false, authToken = null;
   let myUsername = null, myCredits = 0;
+  let myEmailVerified = true, justRegisteredEmail = null;
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
   // Time-buffered snapshot interpolation: we render slightly in the past and lerp between
@@ -62,9 +63,15 @@
       $('hmCredits').textContent = myCredits;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       $('hmWins').textContent = m.wins != null ? m.wins : 0;
+      myEmailVerified = (m.emailVerified !== false);
+      if (m.emailPending || !myEmailVerified) showVerifyBanner(); else hideVerifyBanner();
       showScreen('home');
       loadHistory();
       loadLive();
+    } else if (m.t === 'emailVerified') {
+      myEmailVerified = true; hideVerifyBanner();
+      showSysBanner('✅ Email verified — withdrawals are now enabled.', 'info');
+      setTimeout(function () { showSysBanner('', 'info'); }, 4000);
     } else if (m.t === 'authfail') {
       localStorage.removeItem('lms_token');
       showScreen('auth');
@@ -147,6 +154,33 @@
     document.body.appendChild(o);
   }
 
+  // ---------- Email verification banner ----------
+  function showVerifyBanner() {
+    let el = document.getElementById('verifyBar');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'verifyBar';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9997;padding:9px 14px;text-align:center;' +
+        'font:600 13px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#2a1c02;background:linear-gradient(90deg,#ffd479,#f5a623)';
+      document.body.appendChild(el);
+    }
+    const extra = justRegisteredEmail ? (' We sent a link to ' + justRegisteredEmail + '.') : '';
+    el.innerHTML = '✉️ Verify your email to enable withdrawals.' + extra + ' <a id="verifyResend" style="color:#2a1c02;text-decoration:underline;cursor:pointer">Resend link</a>';
+    const rb = document.getElementById('verifyResend');
+    if (rb) rb.onclick = resendVerification;
+  }
+  function hideVerifyBanner() { const el = document.getElementById('verifyBar'); if (el) el.remove(); }
+  async function resendVerification() {
+    const rb = document.getElementById('verifyResend');
+    if (rb) rb.textContent = 'Sending…';
+    try {
+      const r = await fetch('/api/resend-verification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken }) });
+      const d = await r.json();
+      if (d.already) { myEmailVerified = true; hideVerifyBanner(); return; }
+      if (d.error) { if (rb) rb.textContent = d.error; return; }
+      if (rb) { rb.textContent = 'Sent ✓ — check your inbox'; rb.onclick = null; }
+    } catch (e) { if (rb) rb.textContent = 'Could not send — try again'; }
+  }
+
   // ---------- Auth ----------
   let authMode = 'login';
   function setAuthMode(mode) {
@@ -155,6 +189,7 @@
     $('tabRegister').classList.toggle('sel', mode === 'register');
     $('auGo').textContent = mode === 'login' ? 'Log in' : 'Create account';
     $('auPass').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+    if ($('auEmail')) $('auEmail').style.display = mode === 'register' ? '' : 'none';
     $('auErr').textContent = '';
   }
   $('tabLogin').onclick = () => setAuthMode('login');
@@ -162,17 +197,24 @@
 
   async function submitAuth() {
     const username = $('auUser').value.trim(), password = $('auPass').value;
+    const email = $('auEmail') ? $('auEmail').value.trim() : '';
     $('auErr').textContent = '';
     if (!username || !password) { $('auErr').textContent = 'Enter a username and password.'; return; }
+    if (authMode === 'register') {
+      if (!email) { $('auErr').textContent = 'Enter your email address.'; return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { $('auErr').textContent = 'Enter a valid email address.'; return; }
+    }
     try {
       const r = await fetch('/api/' + (authMode === 'login' ? 'login' : 'register'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, email }),
       });
       const d = await r.json();
       if (d.error) { $('auErr').textContent = d.error; return; }
       localStorage.setItem('lms_token', d.token);
       myUsername = d.username; myCredits = d.credits;
+      myEmailVerified = (d.email_verified !== false);
+      if (authMode === 'register' && d.emailPending) justRegisteredEmail = email;
       authWith(d.token);
     } catch (e) {
       $('auErr').textContent = 'Could not reach the server. Is it running?';
@@ -271,6 +313,7 @@
     const amt = parseInt($('wdAmt').value, 10);
     const coin = wdCoin;
     const address = $('wdAddr').value.trim();
+    if (!myEmailVerified) { $('wdMsg').textContent = 'Verify your email first to enable withdrawals.'; showVerifyBanner(); return; }
     if (!amt || amt < 10) { $('wdMsg').textContent = 'Minimum withdrawal is 10 credits.'; return; }
     if (!address) { $('wdMsg').textContent = 'Enter your ' + coin + ' address.'; return; }
     $('wdMsg').textContent = 'Submitting…';
