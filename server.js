@@ -1212,9 +1212,9 @@ const LOBBY_CASH_HOLD = 15; // cash: hold for real players, then backfill bots a
 const COUNTDOWN_S = 3, ROUNDOVER_S = 6;
 
 // Climb-or-die scroll: the whole field slides DOWN and speeds up over time.
-const SCROLL_START = 31;    // px/sec at the start of a round — quicker off the line
-const SCROLL_RAMP = 2.5;    // added px/sec each second — climbs to top speed sooner
-const SCROLL_MAX = 128;     // hardest steady speed (still climbable; deaths come from misses/balls)
+const SCROLL_START = 46;    // px/sec at the start — noticeably moving from the first second, no lazy warm-up
+const SCROLL_RAMP = 4.6;    // added px/sec each second — it's genuinely fast by ~15s, hard by ~20s
+const SCROLL_MAX = 138;     // hardest steady speed (still climbable; deaths come from misses/balls)
 const PLAT_H = 16;
 const GAP_MIN = 84, GAP_MAX = 116;   // wider vertical spacing — still reachable by a jump, less margin
 const SPREAD = 114;                  // max horizontal shift between rungs — always within a jump's reach
@@ -1222,7 +1222,7 @@ const SPREAD = 114;                  // max horizontal shift between rungs — a
 // Hazards — telegraphed, readable bouncing balls. Every ball warns before it drops and follows
 // deterministic physics, so a skilled player can ALWAYS dodge it. Hard, but never luck.
 const HAZARD_R = 15, HAZARD_GRAV = 0.5, HAZARD_BOUNCE = -12.5;
-const HAZARD_FIRST = 10, HAZARD_MAX = 6;           // balls arrive sooner and pile up thicker late
+const HAZARD_FIRST = 7, HAZARD_MAX = 6;             // balls arrive sooner and pile up thicker late
 const HAZARD_WARN = 0.65;                           // shorter telegraph — you must read & react faster (still always dodgeable)
 const KNOCK_VY = -8.5, KNOCK_SHOVE = 18, KNOCK_INVULN = 0.5;
 
@@ -1339,24 +1339,37 @@ function makeBot(room) {
   const bot = {
     id: nextSessionId++, isBot: true, username: uniqueBotName(room),
     conn: { send() {} }, room, player: newPlayer(),
-    ai: { skill: 0.82 + Math.random() * 0.14, jitter: (Math.random() - 0.5) * 7, aim: 12 + Math.random() * 20,
-          react: 2 + Math.floor(Math.random() * 7), reactT: 0, elite: false, retargetIn: 0, target: null },
+    ai: {
+      skill: 0.9 + Math.random() * 0.1,               // higher floor — even the weakest bot is competent
+      jitter: (Math.random() - 0.5) * 8,
+      aim: 10 + Math.random() * 15,
+      react: 3 + Math.floor(Math.random() * 16),       // 3-18 ticks: WIDE spread so they never jump on the same tick
+      reactT: 0,
+      cadence: 5 + Math.floor(Math.random() * 12),     // each bot re-plans its target on its own clock, not every tick
+      cadenceT: Math.floor(Math.random() * 12),        // random phase so they're out of step from the start
+      hesitate: 0.02 + Math.random() * 0.09,           // occasionally freezes for a tick (looks human, breaks the hive-mind)
+      edgeBias: (Math.random() - 0.5) * 0.62,          // aims for a different spot on the platform than its neighbours
+      elite: false, target: null, retargetIn: 0,
+    },
   };
   room.members.set(bot.id, bot);
   return bot;
 }
 function fillWithBots(room) {
   while (room.members.size < MATCH_SIZE) makeBot(room);
-  // Make up to 2 opponents genuinely elite: near-flawless dodging, precise landings, fast reactions.
+  // Make 2-3 opponents genuinely elite: near-flawless dodging, precise landings, fast reactions.
   const bots = [...room.members.values()].filter(m => m.isBot);
   const shuffled = bots.slice().sort(() => Math.random() - 0.5);
-  for (let i = 0; i < Math.min(2, shuffled.length); i++) {
+  const eliteN = Math.min(bots.length, 2 + (Math.random() < 0.5 ? 1 : 0));
+  for (let i = 0; i < eliteN; i++) {
     const a = shuffled[i].ai;
     a.elite = true;
     a.skill = 1;
-    a.jitter = (Math.random() - 0.5) * 2;   // near-perfect, but not robotically pixel-exact
-    a.aim = 7 + Math.random() * 4;
-    a.react = 1 + Math.floor(Math.random() * 2);
+    a.jitter = (Math.random() - 0.5) * 1.6;            // near-perfect, but not robotically pixel-exact
+    a.aim = 6 + Math.random() * 4;
+    a.react = 1 + Math.floor(Math.random() * 3);       // fast, but still varied so even elites don't sync
+    a.cadence = 3 + Math.floor(Math.random() * 5);
+    a.hesitate = 0;                                    // elites don't dawdle
   }
 }
 
@@ -1554,9 +1567,13 @@ function botThink(room, bot) {
   const feet = p.y + PH, cx = p.x + PW / 2;
 
   const onGround = p.onPlatform != null;
+  // Each bot re-plans on its OWN cadence (plus immediately when it lands or loses its target). This
+  // staggers their decisions so they diverge instead of all picking the same platform on the same tick.
+  ai.cadenceT = (ai.cadenceT || 0) - 1;
   let best = ai.target != null ? room.platforms.find(pl => pl.id === ai.target) : null;
   if (best && best.y >= feet - 2) best = null;
-  if (onGround || !best) {
+  if (onGround || !best || ai.cadenceT <= 0) {
+    ai.cadenceT = ai.cadence;
     best = null; let bestScore = Infinity, nearest = null, nearGap = Infinity;
     for (const plat of room.platforms) {
       if (plat.y >= feet - 4) continue;              // must be above us
@@ -1575,13 +1592,14 @@ function botThink(room, bot) {
 
   // Hazard evasion — skilled bots see the ball coming earlier and from farther away.
   let evade = 0, danger = false;
-  const reach = 76 + ai.skill * 48;
+  const reach = 84 + ai.skill * 54;
   for (const b of room.hazards) {
     const bx = cx - b.x, by = (feet - PH / 2) - b.y;
     if (bx * bx + by * by < (b.r + reach) * (b.r + reach)) { evade = bx >= 0 ? 1 : -1; danger = true; break; }
   }
 
-  let goX = best ? (best.x + best.w / 2) : cx;
+  // Aim for a slightly different spot on the target platform than neighbours (edgeBias) so a crowd fans out.
+  let goX = best ? (best.x + best.w / 2 + best.w * ai.edgeBias) : cx;
   if (evade) goX = cx + evade * 150;
   goX += ai.jitter;
   const d = goX - cx;
@@ -1599,8 +1617,17 @@ function botThink(room, bot) {
         if (tcx < cx && cx < plat.x + 26) wantJump = true;
       }
     }
-    if (feet > WORLD.h - 58) wantJump = true;         // forced: the rising floor is here
+    // React to the rising floor SOONER the better the bot is — this is what makes strong bots hard to outlast.
+    if (feet > WORLD.h - (58 + ai.skill * 36)) wantJump = true;
     if (danger && feet > 150) wantJump = true;        // dodge an incoming ball
+  }
+
+  // Occasional human-like hesitation: freeze for a tick and stagger the resume — never when the floor is
+  // right here or a ball is inbound. This is the main thing that kills the "all bots move as one" look.
+  if (ai.hesitate && !danger && feet < WORLD.h - 100 && Math.random() < ai.hesitate) {
+    p.input.left = p.input.right = p.input.jump = false;
+    ai.reactT = ai.react;
+    return;
   }
 
   // Per-bot reaction delay so they don't all jump on the exact same tick (that was the obvious tell).
