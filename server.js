@@ -1096,7 +1096,10 @@ function geoBypassed(req) {
 // self-locks. The Cloudflare edge rule is the primary enforcer; this app check is defense-in-depth.
 // Master switch — the block does nothing until GEO_ENFORCE is turned on in the env. Lets us deploy
 // the code safely, set the bypass, then flip enforcement on without any risk of self-lockout.
-const GEO_ENFORCE = /^(1|true|on|yes)$/i.test(String(process.env.GEO_ENFORCE || ''));
+// TEMP: US geo-fence turned OFF for now per owner request. Flip GEO_DISABLED to false
+// (or delete this override) to re-enable geo-fencing via the GEO_ENFORCE env var again.
+const GEO_DISABLED = true;
+const GEO_ENFORCE = !GEO_DISABLED && /^(1|true|on|yes)$/i.test(String(process.env.GEO_ENFORCE || ''));
 function geoBlocked(req) {
   if (!GEO_ENFORCE) return false;
   const c = String(req.headers['cf-ipcountry'] || '').toUpperCase();
