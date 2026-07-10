@@ -91,17 +91,63 @@ async function mailgunSend(to, subject, html) {
   return true;
 }
 function verifyEmailHtml(username, link) {
-  return '<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0b1020">' +
-    '<h2 style="margin:0 0 6px">🦆 Verify your email</h2>' +
-    '<p>Hi ' + escapeHtml(username) + ', confirm your email to enable withdrawals on Last Duck Standing.</p>' +
-    '<p style="margin:22px 0"><a href="' + link + '" style="background:#5a6cff;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700;display:inline-block">Verify email</a></p>' +
-    '<p style="color:#667;font-size:13px">Or paste this link into your browser:<br>' + link + '</p>' +
-    '<p style="color:#889;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not sign up, you can ignore this email.</p></div>';
+  const name = escapeHtml(username);
+  const F = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+  return '' +
+'<!doctype html><html><head><meta charset="utf-8">' +
+'<meta name="viewport" content="width=device-width,initial-scale=1">' +
+'<meta name="color-scheme" content="dark light"><title>Welcome to Last Duck Standing</title></head>' +
+'<body style="margin:0;padding:0;background:#080c1c;">' +
+// hidden preheader (inbox preview text)
+'<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#080c1c;font-size:1px;line-height:1px">One quick tap to confirm your email and unlock cash-outs, ' + name + '. 🦆</div>' +
+'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#080c1c;background-image:linear-gradient(180deg,#111a3f 0%,#080c1c 55%);">' +
+'<tr><td align="center" style="padding:34px 16px 44px 16px;">' +
+// ---- card ----
+'<table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:480px;max-width:100%;background:#0e1636;border:1px solid #26305e;border-radius:18px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.45)">' +
+// header band
+'<tr><td align="center" style="background:#141d47;background-image:linear-gradient(120deg,#1b2a63,#131a3d);padding:30px 28px 24px 28px;border-bottom:1px solid #26305e">' +
+'<div style="font-size:52px;line-height:1">🦆</div>' +
+'<div style="margin-top:8px;font-family:' + F + ';font-size:13px;letter-spacing:3px;font-weight:800;color:#ffd479">LAST DUCK STANDING</div>' +
+'</td></tr>' +
+// body
+'<tr><td style="padding:32px 34px 8px 34px;font-family:' + F + '">' +
+'<h1 style="margin:0 0 12px 0;font-size:24px;line-height:1.25;color:#f3f6ff;font-weight:800">You\'re almost in, ' + name + '! 🎮</h1>' +
+'<p style="margin:0 0 16px 0;font-size:15px;line-height:1.65;color:#b8c4ea">Welcome to the arena. Confirm your email with the button below and your account is fully unlocked — including <b style="color:#ffd479">cashing out your winnings</b> in Bitcoin or Litecoin.</p>' +
+'</td></tr>' +
+// CTA button (bulletproof)
+'<tr><td align="center" style="padding:12px 34px 8px 34px">' +
+'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto"><tr>' +
+'<td align="center" bgcolor="#ffcf6a" style="border-radius:12px">' +
+'<a href="' + link + '" target="_blank" style="display:inline-block;padding:15px 40px;font-family:' + F + ';font-size:16px;font-weight:800;color:#231600;text-decoration:none;border-radius:12px;background-image:linear-gradient(90deg,#ffd479,#ff9f43)">Verify my email &rarr;</a>' +
+'</td></tr></table>' +
+'</td></tr>' +
+// feature strip
+'<tr><td style="padding:22px 34px 4px 34px;font-family:' + F + '">' +
+'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#0b1230;border:1px solid #212b57;border-radius:12px">' +
+'<tr><td style="padding:14px 18px;font-size:14px;line-height:1.55;color:#aeb9e0">' +
+'<span style="color:#7d90ff">🏆</span>&nbsp; Pure skill, no luck — out-survive everyone to win the pot<br>' +
+'<span style="color:#7d90ff">⚡</span>&nbsp; Instant matchmaking — free practice or real-cash tournaments<br>' +
+'<span style="color:#7d90ff">💸</span>&nbsp; Automatic crypto cash-outs, straight to your wallet' +
+'</td></tr></table>' +
+'</td></tr>' +
+// fallback link
+'<tr><td style="padding:20px 34px 6px 34px;font-family:' + F + '">' +
+'<p style="margin:0;font-size:12px;line-height:1.5;color:#7c88b4">Button not working? Paste this link into your browser:</p>' +
+'<p style="margin:6px 0 0 0;font-size:12px;line-height:1.5;word-break:break-all"><a href="' + link + '" style="color:#8ea2ff">' + link + '</a></p>' +
+'</td></tr>' +
+// footer
+'<tr><td style="padding:20px 34px 30px 34px;border-top:1px solid #212b57;font-family:' + F + '">' +
+'<p style="margin:14px 0 0 0;font-size:12px;line-height:1.55;color:#6b769f">This link expires in 24 hours. If you didn\'t create a Last Duck Standing account, you can safely ignore this email — no action needed.</p>' +
+'</td></tr>' +
+'</table>' +
+// outside-card footer
+'<div style="margin-top:18px;font-family:' + F + ';font-size:11px;color:#4f597e">© Last Duck Standing · lastduckstanding.io</div>' +
+'</td></tr></table></body></html>';
 }
 async function sendVerification(user) {
   if (!EMAIL_ON || !user.email || !user.email_verify_token) return;
   const link = SITE_URL + '/verify?u=' + encodeURIComponent(user.username_lower) + '&t=' + encodeURIComponent(user.email_verify_token);
-  try { await mailgunSend(user.email, 'Verify your email — Last Duck Standing', verifyEmailHtml(user.username, link)); }
+  try { await mailgunSend(user.email, '🦆 Confirm your email to finish joining Last Duck Standing', verifyEmailHtml(user.username, link)); }
   catch (e) { console.error('sendVerification', e.message); }
 }
 function verifyResultPage(ok, msg) {
