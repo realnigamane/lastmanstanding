@@ -375,7 +375,23 @@ function withdrawableOf(u) {
   const locked = Math.min((u && u.locked_bonus) || 0, credits);
   return Math.max(0, credits - locked);
 }
-// Count wagered credits toward unlocking a player's referral bonus.
+// Deposits must be wagered before they can be withdrawn (anti-abuse / anti-laundering).
+function depositLockEnabled() { return APP_SETTINGS['deposit_lock'] == null ? true : settingBool('deposit_lock'); }
+function depositPlaythrough() { const p = settingNum('deposit_playthrough', 1); return (p >= 0 && p <= 20) ? p : 1; }
+// Lock a freshly-credited amount and add its playthrough requirement (shared pool with referral bonuses).
+async function lockCredits(key, amount, playthrough) {
+  if (!amount || amount <= 0) return;
+  return withLock(key, async () => {
+    const u = await store.getUser(key);
+    if (!u) return;
+    const locked = ((u.locked_bonus) || 0) + Math.floor(amount);
+    const needed = ((u.bonus_wager_needed) || 0) + Math.round(amount * playthrough);
+    try { await store.setUserFields(key, { locked_bonus: locked, bonus_wager_needed: needed }); } catch (e) {}
+    const on = [...allSessions.values()].find(x => x.key === key);
+    if (on) { try { on.conn.send(JSON.stringify({ t: 'lockUpdate', lockedBonus: Math.min(locked, u.credits || 0), wagerNeeded: needed })); } catch (e) {} }
+  });
+}
+// Count wagered credits toward unlocking a player's locked balance (deposits + referral bonus).
 async function progressWager(key, amount) {
   if (!amount) return;
   return withLock(key, async () => {
@@ -939,7 +955,7 @@ async function handleWithdrawCreate(token, amount, coin, address) {
     const withdrawable = uNow ? withdrawableOf(uNow) : 0;
     if (amount > withdrawable) {
       return { error: locked > 0
-        ? ('You have ' + locked + ' locked bonus credits that must be wagered before cashing out. You can withdraw up to ' + withdrawable + ' right now.')
+        ? ('You have ' + locked + ' locked credits that must be wagered before cashing out (deposits and bonuses must be played through). You can withdraw up to ' + withdrawable + ' right now.')
         : 'You do not have enough credits.', locked: locked, withdrawable: withdrawable };
     } }
   // Small cash-outs pay out automatically. Anything above WITHDRAW_MAX is created in BTCPay's
@@ -1005,6 +1021,8 @@ async function handleBtcpayWebhook(req, rawBody) {
       const credited = Math.max(0, Math.floor(amt * (1 - DEPOSIT_FEE)));   // platform takes a 1.5% deposit fee
       const newC = await changeCredits(key, credited);
       reflectCredits(key, newC);
+      // Deposited credits must be wagered before they can be cashed out (anti-abuse / anti-laundering).
+      if (depositLockEnabled()) { try { await lockCredits(key, credited, depositPlaythrough()); } catch (e) {} }
       await store.addTx({ username_lower: key, kind: 'deposit', amount: credited, room_code: ev.invoiceId });
       // Tax ledger: record the deposit at GROSS value received (income). Pull the ACTUAL coin, crypto
       // amount, and exchange rate BTCPay used from the invoice's payment methods (fall back to the live

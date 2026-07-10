@@ -66,17 +66,23 @@
       $('hmWins').textContent = m.wins != null ? m.wins : 0;
       myEmailVerified = (m.emailVerified !== false);
       if (m.emailPending || !myEmailVerified) showVerifyBanner(); else hideVerifyBanner();
-      myLockedBonus = m.lockedBonus || 0; myWagerNeeded = m.wagerNeeded || 0;
+      myLockedBonus = m.lockedBonus || 0; myWagerNeeded = m.wagerNeeded || 0; updateLockUI();
       showScreen('home');
       loadHistory();
       loadLive();
+      loadReferral();
+    } else if (m.t === 'lockUpdate') {
+      myLockedBonus = m.lockedBonus || 0; myWagerNeeded = m.wagerNeeded || 0; updateLockUI();
+      showSysBanner('🔒 Your deposit is locked until wagered — play tournaments to unlock it for cash-out.', 'info');
+      setTimeout(function () { showSysBanner('', 'info'); }, 6000);
       loadReferral();
     } else if (m.t === 'referralEarned') {
       showSysBanner('🎉 Referral reward! You earned ' + m.bonus + ' bonus credits — wager them to unlock cash-out.', 'info');
       setTimeout(function () { showSysBanner('', 'info'); }, 6000);
       loadReferral();
     } else if (m.t === 'bonusUnlocked') {
-      showSysBanner('🔓 Your bonus credits are now unlocked — fully withdrawable.', 'info');
+      myLockedBonus = 0; myWagerNeeded = 0; updateLockUI();
+      showSysBanner('🔓 Your credits are fully unlocked — now withdrawable.', 'info');
       setTimeout(function () { showSysBanner('', 'info'); }, 5000);
       loadReferral();
     } else if (m.t === 'emailVerified') {
@@ -459,6 +465,15 @@
   $('htDep').onclick = () => { $('htDep').classList.add('sel'); $('htWd').classList.remove('sel'); $('histDep').style.display = 'flex'; $('histWd').style.display = 'none'; };
   $('htWd').onclick = () => { $('htWd').classList.add('sel'); $('htDep').classList.remove('sel'); $('histWd').style.display = 'flex'; $('histDep').style.display = 'none'; };
 
+  // ---------- Locked balance (deposits + bonus must be wagered before cash-out) ----------
+  function updateLockUI() {
+    var el = $('lockNote'); if (!el) return;
+    if (myLockedBonus > 0) {
+      el.style.display = '';
+      el.textContent = '🔒 ' + myLockedBonus + ' of your credits are locked until wagered. Play tournaments totalling ' + myWagerNeeded + ' more credits to unlock them for cash-out. (Deposits and bonuses must be played through first.)';
+    } else { el.style.display = 'none'; }
+  }
+
   // ---------- Refer & earn ----------
   let myRefCode = '', myRefLink = '';
   async function loadReferral() {
@@ -467,10 +482,11 @@
     try {
       const d = await (await fetch('/api/referral', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken }) })).json();
       if (!d || !d.ok) return;
+      // Locked-balance note applies to deposits too, so refresh it regardless of the referral card.
+      myLockedBonus = d.lockedBonus || 0; myWagerNeeded = d.wagerNeeded || 0; updateLockUI();
       if (d.enabled === false) { card.style.display = 'none'; return; }
       card.style.display = '';
       myRefCode = d.code || ''; myRefLink = d.link || '';
-      myLockedBonus = d.lockedBonus || 0; myWagerNeeded = d.wagerNeeded || 0;
       if ($('refCode')) $('refCode').textContent = myRefCode;
       if ($('refReferred')) $('refReferred').textContent = d.referred || 0;
       if ($('refQualified')) $('refQualified').textContent = d.qualified || 0;
