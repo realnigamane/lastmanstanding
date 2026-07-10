@@ -75,6 +75,7 @@ const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN || '';
 const MAIL_FROM = process.env.MAIL_FROM || ('Last Duck Standing <no-reply@' + (MAILGUN_DOMAIN || 'lastduckstanding.io') + '>');
 const MAIL_HOST = /eu/i.test(process.env.MAILGUN_REGION || '') ? 'api.eu.mailgun.net' : 'api.mailgun.net';
 const SITE_URL = (process.env.SITE_URL || 'https://lastduckstanding.io').replace(/\/+$/, '');
+const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL || 'elliottdarryius@gmail.com';   // new-signup notifications go here
 // Email verification only turns ON once Mailgun is configured — until then nobody is blocked.
 const EMAIL_ON = !!(MAILGUN_KEY && MAILGUN_DOMAIN);
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -150,6 +151,25 @@ async function sendVerification(user) {
   try { await mailgunSend(user.email, '🦆 Confirm your email to finish joining Last Duck Standing', verifyEmailHtml(user.username, link)); }
   catch (e) { console.error('sendVerification', e.message); }
 }
+// Notify the operator whenever a new account is created.
+async function sendAdminSignupAlert(user) {
+  if (!EMAIL_ON || !ADMIN_ALERT_EMAIL) return;
+  const F = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif";
+  const when = new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const row = (k, v) => '<tr><td style="padding:6px 14px;color:#8b95c9;font-size:13px">' + k + '</td><td style="padding:6px 14px;color:#eaf0ff;font-size:14px;font-weight:600">' + escapeHtml(v) + '</td></tr>';
+  const html = '<div style="font-family:' + F + ';background:#080c1c;padding:22px">' +
+    '<div style="max-width:460px;margin:0 auto;background:#0e1636;border:1px solid #26305e;border-radius:14px;padding:22px">' +
+    '<div style="font-size:16px;font-weight:800;color:#ffd479">🦆 New account created</div>' +
+    '<div style="color:#8b95c9;font-size:12px;margin:2px 0 14px">Last Duck Standing</div>' +
+    '<table style="width:100%;border-collapse:collapse;background:#0b1230;border:1px solid #212b57;border-radius:10px">' +
+    row('Username', user.username) + row('Email', user.email || '—') +
+    row('Referred by', user.referred_by || 'organic (no code)') + row('Created', when) +
+    '</table>' +
+    '<div style="margin-top:16px"><a href="' + SITE_URL + '/admin" style="color:#8ea2ff;font-size:13px">Open the admin portal →</a></div>' +
+    '</div></div>';
+  try { await mailgunSend(ADMIN_ALERT_EMAIL, '🦆 New signup: ' + user.username, html); }
+  catch (e) { console.error('sendAdminSignupAlert', e.message); }
+}
 function verifyResultPage(ok, msg) {
   return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>Email verification — Last Duck Standing</title>' +
@@ -221,6 +241,7 @@ async function registerUser(username, password, email, refCode) {
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
   if (referrer) { store.addReferral({ referrer_lower: referrer.username_lower, referred_lower: key, code: rc, status: 'pending' }).catch(() => {}); }
   if (EMAIL_ON) sendVerification(user).catch(() => {});
+  sendAdminSignupAlert(user).catch(() => {});   // ping the operator's inbox about the new account
   const token = signSession(key, key === ADMIN_USER);
   return { ok: true, token, username, credits: 0, email_verified: verified, emailPending: EMAIL_ON };
 }
@@ -342,6 +363,47 @@ async function adminHandleWithdrawal(id, action) {
 let APP_SETTINGS = {};
 async function loadSettings() { try { APP_SETTINGS = (await store.getSettings()) || {}; } catch (e) {} }
 loadSettings(); setInterval(loadSettings, 15000);
+
+// =================== Site traffic (homepage views + rough unique visitors) ===================
+// Buffered in memory and flushed to Supabase every 30s so a restart never loses much. Uniques are
+// best-effort (per-IP per-day, resets on restart) — good enough for a traffic trend.
+function dayKey(d) { return (d || new Date()).toISOString().slice(0, 10); }
+let trafDay = dayKey(), trafViews = 0, trafNew = 0, trafSeen = new Set();
+function trackVisit(req) {
+  const today = dayKey();
+  if (today !== trafDay) { flushTraffic().catch(() => {}); trafDay = today; trafSeen = new Set(); }
+  trafViews++;
+  const ip = clientIp(req);
+  if (ip && ip !== 'unknown' && !trafSeen.has(ip)) { trafSeen.add(ip); trafNew++; }
+}
+async function flushTraffic() {
+  if (!trafViews && !trafNew) return;
+  const d = trafDay, v = trafViews, u = trafNew; trafViews = 0; trafNew = 0;
+  try { await store.bumpTraffic(d, v, u); } catch (e) { trafViews += v; trafNew += u; }   // put it back, retry next tick
+}
+setInterval(() => flushTraffic().catch(() => {}), 30000);
+process.on('SIGTERM', () => { flushTraffic().catch(() => {}); });
+// Admin traffic report: a continuous 30-day series of views / unique visitors / signups + headline KPIs.
+async function adminTraffic() {
+  let rows = [], signups = [];
+  try { rows = await store.listTraffic(40); } catch (e) {}
+  try { signups = await store.signupsDaily(30); } catch (e) {}
+  const vmap = {}, smap = {};
+  for (const r of rows) { const d = String(r.day).slice(0, 10); vmap[d] = { views: r.views || 0, visitors: r.visitors || 0 }; }
+  const today = dayKey();
+  if (trafViews || trafNew) { const t = vmap[today] || (vmap[today] = { views: 0, visitors: 0 }); t.views += trafViews; t.visitors += trafNew; }
+  for (const s of signups) smap[String(s.day).slice(0, 10)] = Number(s.signups) || 0;
+  const series = [];
+  for (let i = 29; i >= 0; i--) { const d = dayKey(new Date(Date.now() - i * 86400000)); const v = vmap[d] || { views: 0, visitors: 0 }; series.push({ day: d, views: v.views, visitors: v.visitors, signups: smap[d] || 0 }); }
+  const sumN = (n, sel) => series.slice(30 - n).reduce((a, x) => a + sel(x), 0);
+  let totalUsers = 0; try { const ec = await store.rpc('admin_economy'); totalUsers = (ec && ec.user_count) || 0; } catch (e) {}
+  const t = vmap[today] || { views: 0, visitors: 0 };
+  return { ok: true, series,
+    kpis: { viewsToday: t.views, visitorsToday: t.visitors, signupsToday: smap[today] || 0,
+      views7d: sumN(7, x => x.views), visitors7d: sumN(7, x => x.visitors),
+      signups7d: sumN(7, x => x.signups), signups30d: sumN(30, x => x.signups), totalUsers: totalUsers } };
+}
+
 function settingBool(k) { return /^(1|true|on|yes)$/i.test(String(APP_SETTINGS[k] || '')); }
 function settingNum(k, def) { const n = parseFloat(APP_SETTINGS[k]); return isFinite(n) ? n : def; }
 function maintenanceOn() { return settingBool('maintenance_mode'); }
@@ -1285,6 +1347,7 @@ const server = http.createServer((req, res) => {
           else if (au === '/api/admin/setting') r = await adminSetSetting(data.token, data.key, data.value);
           else if (au === '/api/admin/audit') r = { ok: true, audit: await store.listAudit(150) };
           else if (au === '/api/admin/referrals') r = await adminReferrals();
+          else if (au === '/api/admin/traffic') r = await adminTraffic();
           else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
           res.writeHead(r && r.error ? 400 : 200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(r)); return;
@@ -1364,6 +1427,7 @@ const server = http.createServer((req, res) => {
   let file = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
   if (file === 'admin' || file === 'admin/') file = 'admin.html';   // pretty URL: /admin
   if (!STATIC.has(file)) { res.writeHead(404); res.end('Not found'); return; }
+  if (file === 'index.html') { try { trackVisit(req); } catch (e) {} }   // count a homepage visit
   // Maintenance mode: show a friendly closed page for the player-facing app (the /admin portal
   // and its client script stay reachable so the owner can still operate). Owner bypass = ?geo=SECRET.
   if (file === 'index.html' && maintenanceOn() && !geoBypassed(req)) {

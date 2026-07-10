@@ -301,6 +301,24 @@ async function sbListReferralsByReferrer(key) {
   if (!r.ok) throw new Error('Supabase listReferralsByReferrer ' + r.status + ': ' + (await r.text()));
   return await r.json();
 }
+// ---- site traffic (Supabase) ----
+async function sbBumpTraffic(day, views, visitors) {
+  const r = await fetch(SB_URL + '/rest/v1/rpc/bump_traffic', {
+    method: 'POST', headers: sbHeaders(), body: JSON.stringify({ d: day, v: views, u: visitors }),
+  });
+  if (!r.ok) throw new Error('Supabase bumpTraffic ' + r.status + ': ' + (await r.text()));
+}
+async function sbListTraffic(days) {
+  const url = SB_URL + '/rest/v1/traffic_daily?select=day,views,visitors&order=day.desc&limit=' + (days || 60);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listTraffic ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbSignupsDaily(days) {
+  const r = await fetch(SB_URL + '/rest/v1/rpc/admin_signups_daily', { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ days: days || 30 }) });
+  if (!r.ok) throw new Error('Supabase signupsDaily ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
 // ---- File ----
 async function fileListUsersFull(limit) {
   return Object.values(users).map(u => ({
@@ -368,6 +386,22 @@ async function fileUpdateReferral(key, fields) {
 }
 async function fileListReferrals(limit) { return referrals.slice().reverse().slice(0, limit || 500); }
 async function fileListReferralsByReferrer(key) { return referrals.filter(r => r.referrer_lower === key).slice().reverse(); }
+// ---- site traffic (file) ----
+const TRAFFIC_FILE = path.join(DATA_DIR, 'traffic.json');
+let traffic = {}; try { traffic = JSON.parse(fs.readFileSync(TRAFFIC_FILE, 'utf8')); } catch (e) { traffic = {}; }
+function saveTraffic() { try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(TRAFFIC_FILE, JSON.stringify(traffic, null, 2)); } catch (e) {} }
+async function fileBumpTraffic(day, views, visitors) {
+  const row = traffic[day] || (traffic[day] = { day: day, views: 0, visitors: 0 });
+  row.views += views; row.visitors += visitors; saveTraffic();
+}
+async function fileListTraffic(days) {
+  return Object.values(traffic).sort((a, b) => String(b.day).localeCompare(String(a.day))).slice(0, days || 60);
+}
+async function fileSignupsDaily(days) {
+  const since = Date.now() - (days || 30) * 86400000, m = {};
+  for (const u of Object.values(users)) { if (!u.created_at) continue; const t = new Date(u.created_at).getTime(); if (t < since) continue; const d = new Date(u.created_at).toISOString().slice(0, 10); m[d] = (m[d] || 0) + 1; }
+  return Object.keys(m).sort().map(d => ({ day: d, signups: m[d] }));
+}
 
 async function fileRpc(fn) {
   if (fn === 'admin_finance') {
@@ -399,9 +433,11 @@ const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUse
   listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent, updateTaxEvent: fileUpdateTaxEvent };
 
 const refSb = { findByReferralCode: sbFindByReferralCode, recordGamePlayed: sbRecordGamePlayed, addReferral: sbAddReferral,
-  getReferralByReferred: sbGetReferralByReferred, updateReferral: sbUpdateReferral, listReferrals: sbListReferrals, listReferralsByReferrer: sbListReferralsByReferrer };
+  getReferralByReferred: sbGetReferralByReferred, updateReferral: sbUpdateReferral, listReferrals: sbListReferrals, listReferralsByReferrer: sbListReferralsByReferrer,
+  bumpTraffic: sbBumpTraffic, listTraffic: sbListTraffic, signupsDaily: sbSignupsDaily };
 const refFile = { findByReferralCode: fileFindByReferralCode, recordGamePlayed: fileRecordGamePlayed, addReferral: fileAddReferral,
-  getReferralByReferred: fileGetReferralByReferred, updateReferral: fileUpdateReferral, listReferrals: fileListReferrals, listReferralsByReferrer: fileListReferralsByReferrer };
+  getReferralByReferred: fileGetReferralByReferred, updateReferral: fileUpdateReferral, listReferrals: fileListReferrals, listReferralsByReferrer: fileListReferralsByReferrer,
+  bumpTraffic: fileBumpTraffic, listTraffic: fileListTraffic, signupsDaily: fileSignupsDaily };
 
 module.exports = useSupabase
   ? Object.assign({ backend: 'supabase', getUser: sbGetUser, findByEmail: sbFindByEmail, createUser: sbCreateUser, updateCredits: sbUpdateCredits,

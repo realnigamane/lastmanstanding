@@ -134,6 +134,7 @@
     <div class="brand">🦆 <span class="tm">LDS</span> Ops</div>
     <nav class="nav" id="nav">
       <a data-tab="dashboard" class="on"><span class="ic">📊</span> Dashboard</a>
+      <a data-tab="traffic"><span class="ic">📈</span> Traffic</a>
       <a data-tab="live"><span class="ic">🟢</span> Live ops</a>
       <a data-tab="players"><span class="ic">👤</span> Players</a>
       <a data-tab="finance"><span class="ic">💵</span> Finance</a>
@@ -336,6 +337,19 @@
       <div class="card"><h3>Runtime configuration</h3><div id="cfg2" class="muted tiny">Loading…</div></div>
     </section>
 
+    <!-- TRAFFIC -->
+    <section id="s-traffic" class="hidden">
+      <div class="cards" id="trafKpis"></div>
+      <div class="card"><h3>📈 Site visits — last 30 days <span class="r muted tiny" id="trafVisitsSum"></span></h3>
+        <canvas id="trafVisitsChart" height="150" style="width:100%"></canvas>
+        <div class="muted tiny" style="margin-top:6px"><span style="color:#18dcff">●</span> page views &nbsp;·&nbsp; <span style="color:#7d5fff">●</span> unique visitors</div>
+      </div>
+      <div class="card"><h3>🧑‍🚀 New accounts — last 30 days <span class="r muted tiny" id="trafSignupsSum"></span></h3>
+        <canvas id="trafSignupsChart" height="150" style="width:100%"></canvas>
+      </div>
+      <div class="card"><p class="muted tiny" style="margin:0">Page views are counted on each homepage load; unique visitors are per-IP per-day (best-effort). Account creations come straight from the users table. Traffic history is stored daily and survives restarts.</p></div>
+    </section>
+
     <!-- REFERRALS -->
     <section id="s-referrals" class="hidden">
       <div class="cards" id="refKpis"></div>
@@ -415,7 +429,7 @@
   function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden');setTab('dashboard');startTimer();refresh();}
 
   // ---- nav ----
-  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',tax:'Tax & export',moderation:'Moderation',broadcast:'Broadcast',referrals:'Referrals',settings:'Settings',audit:'Audit log'};
+  var titles={dashboard:'Dashboard',traffic:'Traffic',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',tax:'Tax & export',moderation:'Moderation',broadcast:'Broadcast',referrals:'Referrals',settings:'Settings',audit:'Audit log'};
   function setTab(t){tab=t;$('tabTitle').textContent=titles[t]||t;
     Array.prototype.forEach.call(document.querySelectorAll('#nav a'),function(a){a.classList.toggle('on',a.getAttribute('data-tab')===t);});
     Array.prototype.forEach.call(document.querySelectorAll('main section'),function(s){s.classList.add('hidden');});
@@ -438,6 +452,7 @@
       if(tab==='payouts')await loadWithdrawals();
       if(tab==='transactions')await loadTx();
       if(tab==='tax')await loadTax();
+      if(tab==='traffic')await loadTraffic();
       if(tab==='referrals')await loadReferrals();
       if(tab==='settings')await loadSettings();
       if(tab==='audit')await loadAudit();
@@ -741,6 +756,40 @@
   async function loadAudit(){var d=await api('audit');cache.audit=d.audit||[];
     var tb=$('auditTbl').getElementsByTagName('tbody')[0];
     tb.innerHTML=cache.audit.length?cache.audit.map(function(a){return '<tr><td class="muted">'+ftime(a.created_at)+'</td><td>'+esc(a.admin)+'</td><td><span class="pill wait">'+esc(a.action)+'</span></td><td>'+esc(a.target||'—')+'</td><td class="muted tiny mono">'+esc(a.detail||'')+'</td></tr>';}).join(''):'<tr><td colspan="5" class="muted">No entries.</td></tr>';}
+
+  // ---------- traffic ----------
+  async function loadTraffic(){
+    var d=await api('traffic'); if(!d||!d.ok)return; var s=d.series||[]; var k=d.kpis||{};
+    $('trafKpis').innerHTML=
+      kpi('Visits today',(k.viewsToday||0).toLocaleString(),'',(k.visitorsToday||0)+' unique')+
+      kpi('Signups today',(k.signupsToday||0),'good')+
+      kpi('Visits · 7 days',(k.views7d||0).toLocaleString(),'',(k.visitors7d||0)+' unique')+
+      kpi('Signups · 7 days',(k.signups7d||0),'good')+
+      kpi('Signups · 30 days',(k.signups30d||0))+
+      kpi('Total accounts',(k.totalUsers||0),'acc');
+    drawSeries('trafVisitsChart',s,[['views','#18dcff'],['visitors','#7d5fff']],false);
+    drawSeries('trafSignupsChart',s,[['signups','#2fe08a']],true);
+    var tv=0,ts=0; s.forEach(function(p){tv+=p.views;ts+=p.signups;});
+    if($('trafVisitsSum'))$('trafVisitsSum').textContent=tv.toLocaleString()+' views';
+    if($('trafSignupsSum'))$('trafSignupsSum').textContent=ts+' new accounts';
+  }
+  function drawSeries(id,s,keys,bars){
+    var c=$(id);if(!c)return;var w=c.clientWidth||600,h=150;c.width=w;c.height=h;var x=c.getContext('2d');
+    x.clearRect(0,0,w,h);
+    if(!s.length){x.fillStyle='#5f6aa0';x.font='12px system-ui';x.fillText('No data yet',8,20);return;}
+    var pad=32,mx=1;s.forEach(function(p){keys.forEach(function(kc){mx=Math.max(mx,p[kc[0]]||0);});});
+    var stepX=(w-pad-6)/((s.length-1)||1);
+    x.strokeStyle='#1a2246';x.lineWidth=1;[0,.5,1].forEach(function(g){var gy=h-18-g*(h-34);x.beginPath();x.moveTo(pad,gy);x.lineTo(w,gy);x.stroke();});
+    if(bars){
+      var bw=Math.max(2,stepX*0.62);
+      s.forEach(function(p,i){var v=p[keys[0][0]]||0;var px=pad+i*stepX;var bh=(v/mx)*(h-34);x.fillStyle=keys[0][1];x.fillRect(px-bw/2,h-18-bh,bw,bh);});
+    } else {
+      keys.forEach(function(kc){var key=kc[0],color=kc[1];x.beginPath();s.forEach(function(p,i){var px=pad+i*stepX,py=h-18-((p[key]||0)/mx)*(h-34);i?x.lineTo(px,py):x.moveTo(px,py);});x.strokeStyle=color;x.lineWidth=2;x.stroke();
+        s.forEach(function(p,i){var px=pad+i*stepX,py=h-18-((p[key]||0)/mx)*(h-34);x.fillStyle=color;x.beginPath();x.arc(px,py,1.6,0,7);x.fill();});});
+    }
+    x.fillStyle='#5f6aa0';x.font='10px system-ui';x.textAlign='left';x.fillText(String(mx),3,12);x.fillText('0',3,h-15);
+    x.fillText(s[0].day.slice(5),pad,h-4);x.textAlign='right';x.fillText(s[s.length-1].day.slice(5),w-2,h-4);x.textAlign='left';
+  }
 
   // ---------- referrals ----------
   async function loadReferrals(){var d=await api('referrals');if(!d||!d.ok)return;cache.ref=d.referrals||[];var st=d.stats||{};
