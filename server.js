@@ -1352,6 +1352,9 @@ function makeBot(room) {
       lead: 15 + Math.floor(Math.random() * 9),        // frames it leads a moving platform by
       slop: 2 + Math.random() * 3,                     // tight deadzone — accurate control
       reactDir: 1 + Math.floor(Math.random() * 2),     // near-instant direction reversal
+      floorMargin: 52 + Math.random() * 86,            // each bot bails the rising floor at its OWN height (no lockstep hops)
+      jumpDelayMax: 5,                                 // extra 0-5 frame jitter re-rolled per jump — breaks simultaneous triggers
+      seed: (Math.random() * 0x7fffffff) | 0,          // per-bot platform preference so a crowd fans across rungs
       dir: 0, dirLag: 0,
       elite: false, target: null,
     },
@@ -1367,6 +1370,8 @@ function fillWithBots(room) {
     const a = bots[i].ai;
     a.elite = true; a.skill = 1; a.aim = 6; a.react = 1;
     a.jitter = (Math.random() - 0.5) * 1.2; a.slop = 1.5; a.reactDir = 1; a.cadence = 2;
+    // Still sharp, but each elite bails the floor at its own height and with its own tiny jump jitter.
+    a.floorMargin = 70 + Math.random() * 40; a.jumpDelayMax = 2;
   }
 }
 
@@ -1591,7 +1596,10 @@ function botThink(room, bot) {
       const gap = Math.abs(tx - cx);
       if (gap < nearGap) { nearGap = gap; nearest = plat; }
       if (gap > 250) continue;
-      const score = gap + (feet - plat.y) * 0.12 + risk(tx, plat.y) * 300;   // avoid hazardous landing spots
+      // Per-bot preference nudge: two bots looking at the same rungs weigh them differently,
+      // so a crowd fans out across platforms instead of all funnelling onto one and hopping together.
+      const bias = ((((plat.id * 2654435761) ^ ai.seed) >>> 24) & 0x3f) * 0.9;   // 0..~57px pseudo-random per bot+plat
+      const score = gap + (feet - plat.y) * 0.12 + risk(tx, plat.y) * 300 + bias;
       if (score < bestScore) { bestScore = score; best = plat; }
     }
     if (!best) best = nearest;
@@ -1636,16 +1644,18 @@ function botThink(room, bot) {
         if (tcx < cx && cx < plat.x + 24) wantJump = true;
       }
     }
-    if (feet > WORLD.h - (70 + ai.skill * 40)) wantJump = true;   // beat the floor with room to spare
+    if (feet > WORLD.h - ai.floorMargin) wantJump = true;         // each bot bails the floor at its OWN height — no lockstep hop
     if (danger && feet > 140) wantJump = true;                    // hop an incoming ball
   }
 
   if (wantJump) {
-    if (ai.reactT <= 0) ai.reactT = ai.react;
+    // Re-roll a tiny per-jump delay each time a jump is freshly wanted, so two bots that hit
+    // the same trigger on the same tick still leave the ground a few frames apart.
+    if (ai.reactT <= 0 && !ai.jumpArmed) { ai.reactT = ai.react + Math.floor(Math.random() * (ai.jumpDelayMax + 1)); ai.jumpArmed = true; }
     ai.reactT--;
     p.input.jump = (ai.reactT <= 0) && !p.jumpHeld;
   } else {
-    ai.reactT = 0;
+    ai.reactT = 0; ai.jumpArmed = false;
     p.input.jump = false;
   }
 }
