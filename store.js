@@ -254,6 +254,53 @@ async function sbUpdateTaxEvent(id, fields) {
   const r = await fetch(SB_URL + '/rest/v1/tax_events?id=eq.' + encodeURIComponent(id), { method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(fields) });
   if (!r.ok) throw new Error('Supabase updateTaxEvent ' + r.status + ': ' + (await r.text()));
 }
+// ---- referrals (Supabase) ----
+async function sbFindByReferralCode(code) {
+  const url = SB_URL + '/rest/v1/' + TABLE + '?referral_code=ilike.' + encodeURIComponent(code) + '&select=username,username_lower,referral_code&limit=1';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase findByReferralCode ' + r.status + ': ' + (await r.text()));
+  return (await r.json())[0] || null;
+}
+async function sbRecordGamePlayed(key) {
+  const u = await sbGetUser(key);
+  const g = ((u && u.games_played) || 0) + 1;
+  const r = await fetch(SB_URL + '/rest/v1/' + TABLE + '?username_lower=eq.' + encodeURIComponent(key), {
+    method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify({ games_played: g }),
+  });
+  if (!r.ok) throw new Error('Supabase recordGamePlayed ' + r.status + ': ' + (await r.text()));
+  return g;
+}
+async function sbAddReferral(row) {
+  const r = await fetch(SB_URL + '/rest/v1/referrals', {
+    method: 'POST', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(row),
+  });
+  if (r.status === 409) return;                          // referred player already tracked — ignore
+  if (!r.ok) throw new Error('Supabase addReferral ' + r.status + ': ' + (await r.text()));
+}
+async function sbGetReferralByReferred(key) {
+  const url = SB_URL + '/rest/v1/referrals?referred_lower=eq.' + encodeURIComponent(key) + '&select=*&limit=1';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase getReferralByReferred ' + r.status + ': ' + (await r.text()));
+  return (await r.json())[0] || null;
+}
+async function sbUpdateReferral(key, fields) {
+  const r = await fetch(SB_URL + '/rest/v1/referrals?referred_lower=eq.' + encodeURIComponent(key), {
+    method: 'PATCH', headers: sbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(fields),
+  });
+  if (!r.ok) throw new Error('Supabase updateReferral ' + r.status + ': ' + (await r.text()));
+}
+async function sbListReferrals(limit) {
+  const url = SB_URL + '/rest/v1/referrals?select=*&order=created_at.desc&limit=' + (limit || 500);
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listReferrals ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
+async function sbListReferralsByReferrer(key) {
+  const url = SB_URL + '/rest/v1/referrals?referrer_lower=eq.' + encodeURIComponent(key) + '&select=*&order=created_at.desc&limit=500';
+  const r = await fetch(url, { headers: sbHeaders() });
+  if (!r.ok) throw new Error('Supabase listReferralsByReferrer ' + r.status + ': ' + (await r.text()));
+  return await r.json();
+}
 // ---- File ----
 async function fileListUsersFull(limit) {
   return Object.values(users).map(u => ({
@@ -295,6 +342,33 @@ async function fileUpdateTaxEvent(id, fields) {
   const row = taxEvents.find(t => String(t.id) === String(id));
   if (row) { Object.assign(row, fields); try { fs.writeFileSync(TAX_FILE, JSON.stringify(taxEvents, null, 2)); } catch (e) {} }
 }
+// ---- referrals (file) ----
+const REF_FILE = path.join(DATA_DIR, 'referrals.json');
+let referrals = []; try { referrals = JSON.parse(fs.readFileSync(REF_FILE, 'utf8')); } catch (e) { referrals = []; }
+function saveReferrals() { try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(REF_FILE, JSON.stringify(referrals, null, 2)); } catch (e) {} }
+async function fileFindByReferralCode(code) {
+  code = String(code || '').toLowerCase();
+  const u = Object.values(users).find(x => String(x.referral_code || '').toLowerCase() === code);
+  return u ? { username: u.username, username_lower: u.username_lower, referral_code: u.referral_code } : null;
+}
+async function fileRecordGamePlayed(key) {
+  if (!users[key]) return 0;
+  users[key].games_played = (users[key].games_played || 0) + 1; saveUsers();
+  return users[key].games_played;
+}
+async function fileAddReferral(row) {
+  if (referrals.some(r => r.referred_lower === row.referred_lower)) return;
+  referrals.push(Object.assign({ id: referrals.length + 1, status: 'pending', bonus: 0, created_at: new Date().toISOString() }, row));
+  saveReferrals();
+}
+async function fileGetReferralByReferred(key) { return referrals.find(r => r.referred_lower === key) || null; }
+async function fileUpdateReferral(key, fields) {
+  const row = referrals.find(r => r.referred_lower === key);
+  if (row) { Object.assign(row, fields); saveReferrals(); }
+}
+async function fileListReferrals(limit) { return referrals.slice().reverse().slice(0, limit || 500); }
+async function fileListReferralsByReferrer(key) { return referrals.filter(r => r.referrer_lower === key).slice().reverse(); }
+
 async function fileRpc(fn) {
   if (fn === 'admin_finance') {
     const g = k => txs.filter(t => t.kind === k); const s = arr => arr.reduce((x, t) => x + (t.amount || 0), 0);
@@ -324,12 +398,17 @@ const adminFile = { listUsersFull: fileListUsersFull, searchUsers: fileSearchUse
   addAudit: fileAddAudit, listAudit: fileListAudit, getSettings: fileGetSettings, setSetting: fileSetSetting, listAllTx: fileListAllTx, rpc: fileRpc,
   listTaxEvents: fileListTaxEvents, addTaxEvent: fileAddTaxEvent, updateTaxEvent: fileUpdateTaxEvent };
 
+const refSb = { findByReferralCode: sbFindByReferralCode, recordGamePlayed: sbRecordGamePlayed, addReferral: sbAddReferral,
+  getReferralByReferred: sbGetReferralByReferred, updateReferral: sbUpdateReferral, listReferrals: sbListReferrals, listReferralsByReferrer: sbListReferralsByReferrer };
+const refFile = { findByReferralCode: fileFindByReferralCode, recordGamePlayed: fileRecordGamePlayed, addReferral: fileAddReferral,
+  getReferralByReferred: fileGetReferralByReferred, updateReferral: fileUpdateReferral, listReferrals: fileListReferrals, listReferralsByReferrer: fileListReferralsByReferrer };
+
 module.exports = useSupabase
   ? Object.assign({ backend: 'supabase', getUser: sbGetUser, findByEmail: sbFindByEmail, createUser: sbCreateUser, updateCredits: sbUpdateCredits,
       recordWin: sbRecordWin, createWithdrawal: sbCreateWithdrawal,
       listUsers: sbListUsers, listWithdrawals: sbListWithdrawals, setWithdrawalStatus: sbSetWithdrawalStatus,
-      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }, adminSb)
+      txExists: sbTxExists, addTx: sbAddTx, getTx: sbGetTx, listTxByUser: sbListTxByUser }, adminSb, refSb)
   : Object.assign({ backend: 'file', getUser: fileGetUser, findByEmail: fileFindByEmail, createUser: fileCreateUser, updateCredits: fileUpdateCredits,
       recordWin: fileRecordWin, createWithdrawal: fileCreateWithdrawal,
       listUsers: fileListUsers, listWithdrawals: fileListWithdrawals, setWithdrawalStatus: fileSetWithdrawalStatus,
-      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser }, adminFile);
+      txExists: fileTxExists, addTx: fileAddTx, getTx: fileGetTx, listTxByUser: fileListTxByUser }, adminFile, refFile);

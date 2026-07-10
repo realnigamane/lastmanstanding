@@ -6,6 +6,7 @@
 
   let ws = null, wsReady = false, authToken = null;
   let myUsername = null, myCredits = 0;
+  let myLockedBonus = 0, myWagerNeeded = 0;
   let myEmailVerified = true, justRegisteredEmail = null;
   let snap = null;                 // latest game snapshot
   let curScreen = 'auth';
@@ -65,9 +66,19 @@
       $('hmWins').textContent = m.wins != null ? m.wins : 0;
       myEmailVerified = (m.emailVerified !== false);
       if (m.emailPending || !myEmailVerified) showVerifyBanner(); else hideVerifyBanner();
+      myLockedBonus = m.lockedBonus || 0; myWagerNeeded = m.wagerNeeded || 0;
       showScreen('home');
       loadHistory();
       loadLive();
+      loadReferral();
+    } else if (m.t === 'referralEarned') {
+      showSysBanner('🎉 Referral reward! You earned ' + m.bonus + ' bonus credits — wager them to unlock cash-out.', 'info');
+      setTimeout(function () { showSysBanner('', 'info'); }, 6000);
+      loadReferral();
+    } else if (m.t === 'bonusUnlocked') {
+      showSysBanner('🔓 Your bonus credits are now unlocked — fully withdrawable.', 'info');
+      setTimeout(function () { showSysBanner('', 'info'); }, 5000);
+      loadReferral();
     } else if (m.t === 'emailVerified') {
       myEmailVerified = true; hideVerifyBanner();
       showSysBanner('✅ Email verified — withdrawals are now enabled.', 'info');
@@ -191,6 +202,7 @@
     $('auGo').textContent = mode === 'login' ? 'Log in' : 'Create account';
     $('auPass').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
     if ($('auEmail')) $('auEmail').style.display = mode === 'register' ? '' : 'none';
+    if ($('auRef')) $('auRef').style.display = mode === 'register' ? '' : 'none';
     $('auErr').textContent = '';
   }
   $('tabLogin').onclick = () => setAuthMode('login');
@@ -199,6 +211,7 @@
   async function submitAuth() {
     const username = $('auUser').value.trim(), password = $('auPass').value;
     const email = $('auEmail') ? $('auEmail').value.trim() : '';
+    const ref = $('auRef') ? $('auRef').value.trim() : '';
     $('auErr').textContent = '';
     if (!username || !password) { $('auErr').textContent = 'Enter a username and password.'; return; }
     if (authMode === 'register') {
@@ -208,7 +221,7 @@
     try {
       const r = await fetch('/api/' + (authMode === 'login' ? 'login' : 'register'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, email }),
+        body: JSON.stringify({ username, password, email, ref }),
       });
       const d = await r.json();
       if (d.error) { $('auErr').textContent = d.error; return; }
@@ -445,6 +458,38 @@
   }
   $('htDep').onclick = () => { $('htDep').classList.add('sel'); $('htWd').classList.remove('sel'); $('histDep').style.display = 'flex'; $('histWd').style.display = 'none'; };
   $('htWd').onclick = () => { $('htWd').classList.add('sel'); $('htDep').classList.remove('sel'); $('histWd').style.display = 'flex'; $('histDep').style.display = 'none'; };
+
+  // ---------- Refer & earn ----------
+  let myRefCode = '', myRefLink = '';
+  async function loadReferral() {
+    if (!authToken) return;
+    const card = $('refCard'); if (!card) return;
+    try {
+      const d = await (await fetch('/api/referral', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: authToken }) })).json();
+      if (!d || !d.ok) return;
+      if (d.enabled === false) { card.style.display = 'none'; return; }
+      card.style.display = '';
+      myRefCode = d.code || ''; myRefLink = d.link || '';
+      myLockedBonus = d.lockedBonus || 0; myWagerNeeded = d.wagerNeeded || 0;
+      if ($('refCode')) $('refCode').textContent = myRefCode;
+      if ($('refReferred')) $('refReferred').textContent = d.referred || 0;
+      if ($('refQualified')) $('refQualified').textContent = d.qualified || 0;
+      if ($('refEarned')) $('refEarned').textContent = d.earned || 0;
+      if ($('refBlurb')) $('refBlurb').textContent = 'Friends who join with your code and play ' + (d.minGames || 10) + ' games earn you ' + (d.bonus || 0) + ' bonus credits.';
+      const bb = $('refBonusBox');
+      if (bb) {
+        if (myLockedBonus > 0) { bb.style.display = ''; $('refBonusTxt').textContent = '🔒 ' + myLockedBonus + ' locked bonus credits — wager ' + myWagerNeeded + ' more to unlock for cash-out.'; }
+        else bb.style.display = 'none';
+      }
+    } catch (e) {}
+  }
+  function copyText(t) { try { navigator.clipboard.writeText(t); } catch (e) {} }
+  if ($('refCopyCode')) $('refCopyCode').onclick = () => { copyText(myRefCode); $('refCopyCode').textContent = 'Copied ✓'; setTimeout(() => { $('refCopyCode').textContent = 'Copy code'; }, 1500); };
+  if ($('refCopyLink')) $('refCopyLink').onclick = () => { copyText(myRefLink); $('refCopyLink').textContent = 'Copied ✓'; setTimeout(() => { $('refCopyLink').textContent = 'Copy link'; }, 1500); };
+  if ($('refShare')) $('refShare').onclick = () => {
+    if (navigator.share) { navigator.share({ title: 'Last Duck Standing', text: 'Play Last Duck Standing with me — use my code ' + myRefCode, url: myRefLink }).catch(() => {}); }
+    else { copyText(myRefLink); $('refShare').textContent = 'Link copied ✓'; setTimeout(() => { $('refShare').textContent = 'Share'; }, 1500); }
+  };
 
   $('btnCash').onclick = () => { const w = $('wagerPick'); w.style.display = (w.style.display === 'none' || !w.style.display) ? 'block' : 'none'; };
   document.querySelectorAll('.wager').forEach(b => { b.onclick = () => { $('hmResult').textContent = ''; if (!sendWS({ t: 'findMatch', wager: parseInt(b.getAttribute('data-w'), 10) })) $('hmResult').textContent = 'Reconnecting… tap again in a second.'; }; });
@@ -773,6 +818,11 @@
 
   // ---------- Boot ----------
   setAuthMode('login');
+  // Arrived from a referral link (?ref=CODE)? Pre-fill the code and open the sign-up tab.
+  try {
+    const rp = new URLSearchParams(location.search).get('ref');
+    if (rp && $('auRef')) { $('auRef').value = rp.trim().toUpperCase().slice(0, 12); setAuthMode('register'); }
+  } catch (e) {}
   initStars();
   resizeCanvas();
   draw();

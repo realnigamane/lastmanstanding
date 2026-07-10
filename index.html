@@ -193,6 +193,7 @@
       <input id="auUser" maxlength="16" placeholder="Username" autocomplete="username" />
       <input id="auEmail" type="email" maxlength="120" placeholder="Email" autocomplete="email" style="display:none" />
       <input id="auPass" type="password" maxlength="64" placeholder="Password" autocomplete="current-password" />
+      <input id="auRef" maxlength="12" placeholder="Referral code (optional)" autocapitalize="characters" style="display:none;text-transform:uppercase" />
       <div id="auErr" class="err"></div>
       <button id="auGo" class="wide">Log in</button>
       <p class="muted" style="margin-top:14px">Practice is free. Enter real-money <b style="color:#ffd479">skill tournaments</b> — pure skill, no luck. Cash out in Bitcoin or Litecoin.</p>
@@ -262,6 +263,30 @@
         <h2>👀 Watch live games</h2>
         <p class="sub" style="margin:0 0 10px">Spectate matches happening right now — free, just for fun.</p>
         <div id="liveList" class="livelist"><div class="muted" style="font-size:13px">Loading live games…</div></div>
+      </div>
+
+      <div id="refCard" class="card" style="display:none;border:1px solid #2e3a6b;background:linear-gradient(160deg,#141d42,#0e1430)">
+        <h2>🎁 Refer &amp; earn</h2>
+        <p id="refBlurb" class="sub" style="margin:0 0 12px">Share your code. When a friend joins and plays, you earn bonus credits.</p>
+        <div style="display:flex;align-items:center;gap:10px;background:#0b1230;border:1px dashed #35407a;border-radius:12px;padding:12px 14px;margin-bottom:10px">
+          <div style="flex:1">
+            <div style="font-size:11px;letter-spacing:1px;color:#8b95c9;text-transform:uppercase">Your code</div>
+            <div id="refCode" style="font-size:24px;font-weight:800;letter-spacing:2px;color:#ffd479">—</div>
+          </div>
+          <button id="refCopyCode" class="ghost" style="white-space:nowrap">Copy code</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button id="refCopyLink" class="ghost" style="flex:1">Copy link</button>
+          <button id="refShare" class="wide" style="flex:1;margin:0;background:linear-gradient(90deg,#ffd479,#ff9f43);color:#231600;font-weight:800">Share</button>
+        </div>
+        <div style="display:flex;gap:8px;text-align:center">
+          <div style="flex:1;background:#0b1230;border:1px solid #212b57;border-radius:10px;padding:10px 6px"><div style="font-size:22px;font-weight:800;color:#eaf0ff"><span id="refReferred">0</span></div><div style="font-size:11px;color:#8b95c9">Referred</div></div>
+          <div style="flex:1;background:#0b1230;border:1px solid #212b57;border-radius:10px;padding:10px 6px"><div style="font-size:22px;font-weight:800;color:#9fffce"><span id="refQualified">0</span></div><div style="font-size:11px;color:#8b95c9">Qualified</div></div>
+          <div style="flex:1;background:#0b1230;border:1px solid #212b57;border-radius:10px;padding:10px 6px"><div style="font-size:22px;font-weight:800;color:#ffd479"><span id="refEarned">0</span></div><div style="font-size:11px;color:#8b95c9">Earned</div></div>
+        </div>
+        <div id="refBonusBox" style="display:none;margin-top:12px;background:#231a06;border:1px solid #5a4a1c;border-radius:10px;padding:11px 13px">
+          <div id="refBonusTxt" style="font-size:13px;color:#ffd479"></div>
+        </div>
       </div>
 
       <div class="card">

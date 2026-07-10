@@ -191,7 +191,7 @@ async function handleResendVerification(token) {
   return { ok: true };
 }
 
-async function registerUser(username, password, email) {
+async function registerUser(username, password, email, refCode) {
   username = String(username || '').trim();
   if (username.length < 3 || username.length > 16) return { error: 'Username must be 3-16 characters.' };
   if (!/^[a-zA-Z0-9_]+$/.test(username)) return { error: 'Use letters, numbers, and underscores only.' };
@@ -206,12 +206,20 @@ async function registerUser(username, password, email) {
   const salt = crypto.randomBytes(16).toString('hex');
   const verified = !EMAIL_ON;                                  // no Mailgun yet -> don't block anyone
   const vtoken = EMAIL_ON ? crypto.randomBytes(24).toString('hex') : null;
+  // Referral: validate the entered code -> a real, different, existing user.
+  let referrer = null;
+  const rc = String(refCode || '').trim().toUpperCase();
+  if (rc) { try { const owner = await store.findByReferralCode(rc); if (owner && owner.username_lower !== key) referrer = owner; } catch (e) {} }
+  const myCode = await uniqueReferralCode();
   const user = { username, username_lower: key, salt, hash: hashPw(password, salt),
                  credits: 0, wins: 0, created_at: new Date().toISOString(),
                  email: email, email_verified: verified, email_verify_token: vtoken,
-                 email_verify_sent_at: EMAIL_ON ? new Date().toISOString() : null };
+                 email_verify_sent_at: EMAIL_ON ? new Date().toISOString() : null,
+                 referral_code: myCode, referred_by: referrer ? referrer.username_lower : null,
+                 games_played: 0, referral_qualified: false, locked_bonus: 0, bonus_wager_needed: 0 };
   try { await store.createUser(user); }
   catch (e) { if (e.message === 'DUPLICATE') return { error: 'That username is already taken.' }; throw e; }
+  if (referrer) { store.addReferral({ referrer_lower: referrer.username_lower, referred_lower: key, code: rc, status: 'pending' }).catch(() => {}); }
   if (EMAIL_ON) sendVerification(user).catch(() => {});
   const token = signSession(key, key === ADMIN_USER);
   return { ok: true, token, username, credits: 0, email_verified: verified, emailPending: EMAIL_ON };
@@ -335,7 +343,115 @@ let APP_SETTINGS = {};
 async function loadSettings() { try { APP_SETTINGS = (await store.getSettings()) || {}; } catch (e) {} }
 loadSettings(); setInterval(loadSettings, 15000);
 function settingBool(k) { return /^(1|true|on|yes)$/i.test(String(APP_SETTINGS[k] || '')); }
+function settingNum(k, def) { const n = parseFloat(APP_SETTINGS[k]); return isFinite(n) ? n : def; }
 function maintenanceOn() { return settingBool('maintenance_mode'); }
+
+// =================== Referral / affiliate program ===================
+// A referrer earns a flat bonus once someone who signed up with their code plays enough games.
+// The bonus lands in the referrer's balance but is LOCKED — it must be wagered (played through)
+// before it can be cashed out. We enforce that only at withdrawal time, so the money paths
+// (escrow / debit / payout) stay untouched.
+function referralEnabled() { return APP_SETTINGS['referral_enabled'] == null ? true : settingBool('referral_enabled'); }
+function referralBonus() { return Math.max(0, Math.floor(settingNum('referral_bonus', 25))); }
+function referralMinGames() { return Math.max(1, Math.floor(settingNum('referral_min_games', 10))); }
+function referralPlaythrough() { const p = settingNum('referral_playthrough', 1); return (p >= 0 && p <= 20) ? p : 1; }
+const REF_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genReferralCode() { let c = ''; for (let i = 0; i < 7; i++) c += REF_ALPHABET[Math.floor(Math.random() * REF_ALPHABET.length)]; return c; }
+async function uniqueReferralCode() {
+  for (let i = 0; i < 8; i++) { const c = genReferralCode(); try { if (!(await store.findByReferralCode(c))) return c; } catch (e) { return c; } }
+  return genReferralCode() + Math.floor(Math.random() * 9);
+}
+// Older accounts predate referral codes — hand them one on demand.
+async function ensureReferralCode(user) {
+  if (user && user.referral_code) return user.referral_code;
+  const code = await uniqueReferralCode();
+  try { await store.setUserFields(user.username_lower, { referral_code: code }); } catch (e) {}
+  if (user) user.referral_code = code;
+  return code;
+}
+// How much of a balance is withdrawable right now (locked referral bonus must be wagered first).
+function withdrawableOf(u) {
+  const credits = (u && u.credits) || 0;
+  const locked = Math.min((u && u.locked_bonus) || 0, credits);
+  return Math.max(0, credits - locked);
+}
+// Count wagered credits toward unlocking a player's referral bonus.
+async function progressWager(key, amount) {
+  if (!amount) return;
+  return withLock(key, async () => {
+    const u = await store.getUser(key);
+    if (!u || !(u.bonus_wager_needed > 0)) return;
+    const needed = Math.max(0, (u.bonus_wager_needed || 0) - amount);
+    const fields = { bonus_wager_needed: needed };
+    if (needed <= 0) fields.locked_bonus = 0;             // fully wagered -> bonus unlocks for cash-out
+    try { await store.setUserFields(key, fields); } catch (e) {}
+    if (needed <= 0) { const on = [...allSessions.values()].find(x => x.key === key); if (on) { try { on.conn.send(JSON.stringify({ t: 'bonusUnlocked' })); } catch (e) {} } }
+  });
+}
+// A human just finished a match. Count it; if they were referred and just crossed the threshold, pay the referrer.
+async function recordGameForReferral(key) {
+  let games;
+  try { games = await store.recordGamePlayed(key); } catch (e) { return; }
+  if (!referralEnabled()) return;
+  try {
+    const u = await store.getUser(key);
+    if (!u || !u.referred_by || u.referral_qualified) return;
+    if (games < referralMinGames()) return;
+    if (EMAIL_ON && !u.email_verified) return;            // referred account must be email-verified to pay out
+    await payReferral(u);
+  } catch (e) { console.error('referral check', e.message); }
+}
+async function payReferral(referredUser) {
+  const referredKey = referredUser.username_lower;
+  if (referredUser.referral_qualified) return;
+  await store.setUserFields(referredKey, { referral_qualified: true });   // mark first — guards double payout
+  const refKey = String(referredUser.referred_by || '').toLowerCase();
+  if (!refKey || refKey === referredKey) return;                          // never pay a self-referral
+  const bonus = referralBonus(), pt = referralPlaythrough();
+  const referrer = await store.getUser(refKey);
+  if (!referrer) return;
+  if (bonus > 0) {
+    const nc = await changeCredits(refKey, bonus);                        // bonus lands in the balance...
+    const u2 = await store.getUser(refKey);
+    const lockedNow = ((u2 && u2.locked_bonus) || 0) + bonus;            // ...but locked until wagered
+    const needNow = ((u2 && u2.bonus_wager_needed) || 0) + Math.round(bonus * pt);
+    try { await store.setUserFields(refKey, { locked_bonus: lockedNow, bonus_wager_needed: needNow }); } catch (e) {}
+    reflectCredits(refKey, nc);
+    try { await store.addTx({ username_lower: refKey, kind: 'referral_bonus', amount: bonus, room_code: 'ref:' + referredKey }); } catch (e) {}
+  }
+  try { await store.updateReferral(referredKey, { status: 'qualified', bonus: bonus, games_at_qualify: referralMinGames(), qualified_at: new Date().toISOString() }); } catch (e) {}
+  store.addAudit({ admin: 'system', action: 'referral_paid', target: refKey, detail: JSON.stringify({ referred: referredKey, bonus: bonus }) }).catch(() => {});
+  const online = [...allSessions.values()].find(x => x.key === refKey);
+  if (online) { try { online.conn.send(JSON.stringify({ t: 'referralEarned', bonus: bonus, referred: referredUser.username })); } catch (e) {} }
+}
+// Player-facing referral summary.
+async function referralInfo(key) {
+  const u = await store.getUser(key);
+  if (!u) return { error: 'Account not found.' };
+  const code = await ensureReferralCode(u);
+  let list = [];
+  try { list = await store.listReferralsByReferrer(key); } catch (e) {}
+  const qualified = list.filter(r => r.status === 'qualified');
+  const earned = qualified.reduce((a, r) => a + (r.bonus || 0), 0);
+  return { ok: true, code: code, link: SITE_URL + '/?ref=' + code,
+    enabled: referralEnabled(), bonus: referralBonus(), minGames: referralMinGames(),
+    referred: list.length, qualified: qualified.length, pending: list.length - qualified.length, earned: earned,
+    lockedBonus: Math.min(u.locked_bonus || 0, u.credits || 0), wagerNeeded: u.bonus_wager_needed || 0, credits: u.credits || 0 };
+}
+// Admin: full referral ledger + rolled-up stats.
+async function adminReferrals() {
+  let list = [];
+  try { list = await store.listReferrals(1000); } catch (e) {}
+  const qualified = list.filter(r => r.status === 'qualified');
+  const paid = qualified.reduce((a, r) => a + (r.bonus || 0), 0);
+  const byReferrer = {};
+  for (const r of list) { byReferrer[r.referrer_lower] = (byReferrer[r.referrer_lower] || 0) + 1; }
+  const topReferrers = Object.entries(byReferrer).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([k, n]) => ({ user: k, count: n }));
+  return { ok: true,
+    stats: { total: list.length, qualified: qualified.length, pending: list.length - qualified.length, paid: paid,
+             enabled: referralEnabled(), bonus: referralBonus(), minGames: referralMinGames(), playthrough: referralPlaythrough() },
+    referrals: list, topReferrers: topReferrers };
+}
 
 // Rolling peak of concurrent authenticated players (resets on restart).
 let peakOnline = 0;
@@ -818,6 +934,14 @@ async function handleWithdrawCreate(token, amount, coin, address) {
   if (address.length < 20 || address.length > 120) return { error: 'Enter a valid ' + (coin || '') + ' address.' };
   if (amount < WITHDRAW_MIN) return { error: 'Minimum withdrawal is ' + WITHDRAW_MIN + ' credits.' };
   if (!btcpayConfigured()) return { error: 'Withdrawals are not enabled yet.' };
+  // Referral bonus is locked until wagered — you can never cash out more than your withdrawable balance.
+  { const uNow = await store.getUser(key); const locked = uNow ? Math.min(uNow.locked_bonus || 0, uNow.credits || 0) : 0;
+    const withdrawable = uNow ? withdrawableOf(uNow) : 0;
+    if (amount > withdrawable) {
+      return { error: locked > 0
+        ? ('You have ' + locked + ' locked bonus credits that must be wagered before cashing out. You can withdraw up to ' + withdrawable + ' right now.')
+        : 'You do not have enough credits.', locked: locked, withdrawable: withdrawable };
+    } }
   // Small cash-outs pay out automatically. Anything above WITHDRAW_MAX is created in BTCPay's
   // "Awaiting approval" queue so the operator can manually review it before it's sent — players
   // never see this threshold; to them it's just a withdrawal being processed.
@@ -1139,12 +1263,14 @@ const server = http.createServer((req, res) => {
           else if (au === '/api/admin/settings') { await loadSettings(); r = { ok: true, settings: APP_SETTINGS }; }
           else if (au === '/api/admin/setting') r = await adminSetSetting(data.token, data.key, data.value);
           else if (au === '/api/admin/audit') r = { ok: true, audit: await store.listAudit(150) };
+          else if (au === '/api/admin/referrals') r = await adminReferrals();
           else { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
           res.writeHead(r && r.error ? 400 : 200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(r)); return;
         }
         let result;
-        if (req.url === '/api/register') result = await registerUser(data.username, data.password, data.email);
+        if (req.url === '/api/register') result = await registerUser(data.username, data.password, data.email, data.ref);
+        else if (req.url === '/api/referral') { const k = sessionKey(data.token); result = k ? await referralInfo(k) : { error: 'Please log in again.' }; }
         else if (req.url === '/api/login') result = await loginUser(data.username, data.password);
         else if (req.url === '/api/resend-verification') result = await handleResendVerification(data.token);
         else if (req.url === '/api/deposit/create') result = await handleDepositCreate(data.token, data.amount);
@@ -1717,6 +1843,8 @@ function startMatch(room) {
   let collected = 0;
   for (const s of room.members.values()) if (!s.isBot && s.wagerPaid > 0) collected += s.wagerPaid;
   room.pot = collected;
+  // Committed stakes count toward unlocking any locked referral bonus (playthrough).
+  for (const s of room.members.values()) if (!s.isBot && s.key && s.wagerPaid > 0) progressWager(s.key, s.wagerPaid).catch(() => {});
   room.phase = 'countdown'; room.phaseTimer = COUNTDOWN_S;
   broadcastRoom(room);
 }
@@ -1812,6 +1940,8 @@ function updateRoom(room, dt) {
         store.recordWin(winner.key).then(w => { winner.wonStats = { wins: w, rank: rankFor(w), payout: payout }; })
           .catch(e => console.error('recordWin failed:', e.message));
       }
+      // Every human who played this match gets a game credited — this drives referral qualification.
+      for (const s of room.members.values()) if (!s.isBot && s.key) recordGameForReferral(s.key).catch(() => {});
       room.phase = 'roundover'; room.phaseTimer = ROUNDOVER_S;
       broadcastRoom(room);
     }
@@ -1940,7 +2070,7 @@ ws.attach(server, (conn) => {
         if (u.banned && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'banned', reason: u.banned_reason || '' })); return; }
         if (maintenanceOn() && key !== ADMIN_USER) { conn.send(JSON.stringify({ t: 'maintenance', message: APP_SETTINGS['maintenance_message'] || 'The site is temporarily under maintenance.' })); return; }
         s.username = u.username; s.key = key; s.credits = u.credits; s.emailVerified = !!u.email_verified;
-        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0), emailVerified: !!u.email_verified, emailPending: EMAIL_ON && !u.email_verified }));
+        conn.send(JSON.stringify({ t: 'authed', username: u.username, credits: u.credits, wins: u.wins || 0, rank: rankFor(u.wins || 0), emailVerified: !!u.email_verified, emailPending: EMAIL_ON && !u.email_verified, lockedBonus: Math.min(u.locked_bonus || 0, u.credits || 0), wagerNeeded: u.bonus_wager_needed || 0 }));
         if (settingBool('announcement_active') && APP_SETTINGS['announcement']) {
           try { conn.send(JSON.stringify({ t: 'sysbanner', text: APP_SETTINGS['announcement'], level: APP_SETTINGS['announcement_level'] || 'info' })); } catch (e) {}
         }

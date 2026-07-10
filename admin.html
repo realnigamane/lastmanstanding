@@ -142,6 +142,7 @@
       <a data-tab="tax"><span class="ic">🧮</span> Tax &amp; export</a>
       <a data-tab="moderation"><span class="ic">🛡️</span> Moderation</a>
       <a data-tab="broadcast"><span class="ic">📢</span> Broadcast</a>
+      <a data-tab="referrals"><span class="ic">🎁</span> Referrals</a>
       <a data-tab="settings"><span class="ic">⚙️</span> Settings</a>
       <a data-tab="audit"><span class="ic">📜</span> Audit log</a>
     </nav>
@@ -335,6 +336,26 @@
       <div class="card"><h3>Runtime configuration</h3><div id="cfg2" class="muted tiny">Loading…</div></div>
     </section>
 
+    <!-- REFERRALS -->
+    <section id="s-referrals" class="hidden">
+      <div class="cards" id="refKpis"></div>
+      <div class="card"><h3>⚙️ Referral program settings</h3>
+        <div class="row" style="flex-wrap:wrap;gap:14px;align-items:flex-end">
+          <div><label class="muted tiny">Program</label><br><span id="refState" class="pill off">OFF</span> <button id="btnRefToggle" class="warn sm">Toggle</button></div>
+          <div><label class="muted tiny">Bonus (credits)</label><br><input id="refBonusIn" type="number" min="0" style="width:100px"></div>
+          <div><label class="muted tiny">Min games to qualify</label><br><input id="refMinIn" type="number" min="1" style="width:100px"></div>
+          <div><label class="muted tiny">Playthrough (×bonus)</label><br><input id="refPtIn" type="number" min="0" step="0.5" style="width:100px"></div>
+          <button id="btnRefSave" class="good sm">Save</button>
+        </div>
+        <p class="muted tiny" style="margin-top:8px">A referrer earns the bonus once their referred player completes the minimum games. The bonus is locked and must be wagered (playthrough × bonus) before it can be cashed out. Set bonus to 0 to pause payouts without disabling codes.</p>
+        <div id="refSetMsg" class="tiny"></div></div>
+      <div class="card"><h3>🏅 Top referrers</h3><div id="refTop" class="muted tiny">Loading…</div></div>
+      <div class="card"><h3>🎁 Referral ledger <span class="r"><button class="ghost sm" id="expRef">⬇ CSV</button></span></h3>
+        <div class="scroll"><table id="refTbl"><thead><tr>
+          <th>Referrer</th><th>Referred</th><th>Code</th><th>Status</th><th>Bonus</th><th>Joined</th><th>Qualified</th>
+        </tr></thead><tbody></tbody></table></div></div>
+    </section>
+
     <!-- AUDIT -->
     <section id="s-audit" class="hidden">
       <div class="card"><h3>📜 Admin audit log <span class="r"><button class="ghost sm" id="expAudit">⬇ CSV</button></span></h3>
@@ -394,7 +415,7 @@
   function showApp(){$('login').classList.add('hidden');$('app').classList.remove('hidden');setTab('dashboard');startTimer();refresh();}
 
   // ---- nav ----
-  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',tax:'Tax & export',moderation:'Moderation',broadcast:'Broadcast',settings:'Settings',audit:'Audit log'};
+  var titles={dashboard:'Dashboard',live:'Live ops',players:'Players',finance:'Finance',payouts:'Payouts',transactions:'Transactions',tax:'Tax & export',moderation:'Moderation',broadcast:'Broadcast',referrals:'Referrals',settings:'Settings',audit:'Audit log'};
   function setTab(t){tab=t;$('tabTitle').textContent=titles[t]||t;
     Array.prototype.forEach.call(document.querySelectorAll('#nav a'),function(a){a.classList.toggle('on',a.getAttribute('data-tab')===t);});
     Array.prototype.forEach.call(document.querySelectorAll('main section'),function(s){s.classList.add('hidden');});
@@ -417,6 +438,7 @@
       if(tab==='payouts')await loadWithdrawals();
       if(tab==='transactions')await loadTx();
       if(tab==='tax')await loadTax();
+      if(tab==='referrals')await loadReferrals();
       if(tab==='settings')await loadSettings();
       if(tab==='audit')await loadAudit();
       $('liveTxt').textContent='updated '+new Date().toLocaleTimeString();
@@ -719,6 +741,25 @@
   async function loadAudit(){var d=await api('audit');cache.audit=d.audit||[];
     var tb=$('auditTbl').getElementsByTagName('tbody')[0];
     tb.innerHTML=cache.audit.length?cache.audit.map(function(a){return '<tr><td class="muted">'+ftime(a.created_at)+'</td><td>'+esc(a.admin)+'</td><td><span class="pill wait">'+esc(a.action)+'</span></td><td>'+esc(a.target||'—')+'</td><td class="muted tiny mono">'+esc(a.detail||'')+'</td></tr>';}).join(''):'<tr><td colspan="5" class="muted">No entries.</td></tr>';}
+
+  // ---------- referrals ----------
+  async function loadReferrals(){var d=await api('referrals');if(!d||!d.ok)return;cache.ref=d.referrals||[];var st=d.stats||{};
+    $('refKpis').innerHTML=kpi('Total referrals',st.total||0)+kpi('Qualified',st.qualified||0,'good')+kpi('Pending',st.pending||0,'warn')+kpi('Bonus paid',money(st.paid||0),'good')+kpi('Bonus / referral',money(st.bonus||0))+kpi('Min games',st.minGames||0);
+    $('refState').className='pill '+(st.enabled?'on':'off');$('refState').textContent=st.enabled?'ON':'OFF';
+    if(document.activeElement!==$('refBonusIn'))$('refBonusIn').value=st.bonus!=null?st.bonus:25;
+    if(document.activeElement!==$('refMinIn'))$('refMinIn').value=st.minGames!=null?st.minGames:10;
+    if(document.activeElement!==$('refPtIn'))$('refPtIn').value=st.playthrough!=null?st.playthrough:1;
+    cache.refEnabled=!!st.enabled;
+    var top=d.topReferrers||[];$('refTop').innerHTML=top.length?top.map(function(t){return '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1c2444;padding:4px 0"><span>'+esc(t.user)+'</span><span class="muted">'+t.count+' referred</span></div>';}).join(''):'No referrals yet.';
+    var tb=$('refTbl').getElementsByTagName('tbody')[0];
+    tb.innerHTML=cache.ref.length?cache.ref.map(function(r){return '<tr><td>'+esc(r.referrer_lower)+'</td><td>'+esc(r.referred_lower)+'</td><td class="mono tiny">'+esc(r.code||'')+'</td><td><span class="pill '+(r.status==='qualified'?'on':'wait')+'">'+esc(r.status||'pending')+'</span></td><td>'+(r.bonus?money(r.bonus):'—')+'</td><td class="muted tiny">'+ftime(r.created_at)+'</td><td class="muted tiny">'+(r.qualified_at?ftime(r.qualified_at):'—')+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No referrals yet.</td></tr>';}
+  $('btnRefToggle').onclick=async function(){var d=await api('setting',{key:'referral_enabled',value:cache.refEnabled?'false':'true'});if(d.error)toast(d.error,'bad');else{toast('Referral program '+(cache.refEnabled?'disabled':'enabled'),cache.refEnabled?'warn':'good');loadReferrals();}};
+  $('btnRefSave').onclick=async function(){
+    var b=parseInt($('refBonusIn').value,10);var g=parseInt($('refMinIn').value,10);var p=parseFloat($('refPtIn').value);
+    if(isNaN(b)||b<0||isNaN(g)||g<1||isNaN(p)||p<0){$('refSetMsg').style.color='#ff9a9a';$('refSetMsg').textContent='Enter valid values.';return;}
+    await api('setting',{key:'referral_bonus',value:String(b)});await api('setting',{key:'referral_min_games',value:String(g)});await api('setting',{key:'referral_playthrough',value:String(p)});
+    $('refSetMsg').style.color='#9fffce';$('refSetMsg').textContent='✓ Saved';toast('Referral settings saved','good');loadReferrals();};
+  $('expRef').onclick=function(){var h=[['referrer','referred','code','status','bonus','joined','qualified']];(cache.ref||[]).forEach(function(r){h.push([r.referrer_lower,r.referred_lower,r.code||'',r.status||'pending',r.bonus||0,r.created_at,r.qualified_at||'']);});dl('referrals.csv',csv(h));};
 
   // ---------- credit adjuster (finance tab) ----------
   async function adjust(sign){var u=$('cUser').value.trim(),a=parseInt($('cAmt').value,10);$('creditMsg').textContent='';
