@@ -1203,8 +1203,10 @@ const GRAVITY = 0.72, MOVE_ACCEL = 0.95, MOVE_MAX = 5.6, FRICTION = 0.80;
 const JUMP_V = -15.2, MAX_FALL = 17;
 
 // Matchmaking
-const MATCH_SIZE = 8;                                       // target players per match
-const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // base fill window before bots backfill
+const MATCH_SIZE = 10;                                      // ideal / full house per match
+const MIN_CASH_PLAYERS = 2;                                 // tournaments are real players only — need at least 2 to start
+const SOLO_RECHECK_S = 8;                                   // lone tournament player: re-check / re-notify window while they wait
+const MATCH_WAIT_S = Number(process.env.MATCH_WAIT_S || 10); // base fill window before bots backfill (practice only)
 const JOIN_EXTEND_S = 6;    // each time a human joins a waiting lobby, keep it open a few more seconds
 const MATCH_WAIT_MAX = 25;  // ...but never make anyone wait longer than this since the lobby opened
 const LOBBY_S = 30;         // post-match ready-up window (practice)
@@ -1662,7 +1664,7 @@ function botThink(room, bot) {
 
 // =================== Match flow ===================
 function startMatch(room) {
-  fillWithBots(room);
+  if (room.wager === 0) fillWithBots(room);   // bots backfill FREE practice only — tournaments are real players vs real players
   setupRound(room);
   // Wagers were already escrowed when each human joined (findMatch). The pot is the
   // sum of REAL wagers collected — bots add nothing, so the house never funds winnings.
@@ -1715,6 +1717,19 @@ function updateRoom(room, dt) {
     if (humanCount(room) === 0) { killRoom(room); return; }
     room.waited += dt;
     room.fillTimer -= dt;
+    if (room.wager > 0) {
+      // Tournament: real players only — never fill with bots. Ideal is 10, minimum is 2.
+      const humans = humanCount(room);
+      if (humans >= MATCH_SIZE) { startMatch(room); return; }        // full house
+      if (room.fillTimer <= 0) {
+        if (humans >= MIN_CASH_PLAYERS) { startMatch(room); return; } // enough real players — go
+        // Only one player in the queue. Hold it open (a bot never backfills a cash game) and keep them informed.
+        room.fillTimer = SOLO_RECHECK_S;
+        sendSearch(room);
+      }
+      return;
+    }
+    // Practice: bots backfill so a game always starts.
     if (room.members.size >= MATCH_SIZE || room.fillTimer <= 0) startMatch(room);
     return;
   }
@@ -1768,7 +1783,15 @@ function updateRoom(room, dt) {
     if (allReady && readyN >= (room.wager > 0 ? 2 : 1) && room.lobbyTimer > 2) { startFromLobby(room); return; }
     if (room.lobbyTimer >= deadline) {                                       // window up: drop idlers, then go
       kickNonReady(room);
-      if (humanCount(room) >= 1) startFromLobby(room); else killRoom(room);
+      const need = room.wager > 0 ? MIN_CASH_PLAYERS : 1;                    // tournaments need 2+, practice just 1 (+bots)
+      if (humanCount(room) >= need) { startFromLobby(room); return; }
+      if (humanCount(room) === 0) { killRoom(room); return; }
+      // Not enough players for a tournament rematch — refund the readied stake(s) and send them home.
+      for (const s of [...room.members.values()]) {
+        if (s.isBot) continue;
+        leaveMatch(s, true);   // refunds the entry fee (match hasn't started), removes from room
+        try { s.conn.send(JSON.stringify({ t: 'home', credits: s.credits, note: 'Not enough players for a tournament rematch — your entry fee was refunded.' })); } catch (e) {}
+      }
     }
   }
 }
@@ -1782,12 +1805,16 @@ function memberList(room) {
   }));
 }
 function sendSearch(room) {
+  // A tournament with only one player waiting can't start (no bots ever backfill cash games) — tell them.
+  const soloWait = room.wager > 0 && humanCount(room) < MIN_CASH_PLAYERS;
   const msg = JSON.stringify({
     t: 'searching',
     found: humanCount(room),
     target: MATCH_SIZE, secs: Math.max(0, Math.ceil(room.fillTimer)),
     wager: room.wager, pot: room.wager * humanCount(room),
     members: memberList(room),
+    waiting: soloWait,
+    note: soloWait ? 'No one else is searching for this tournament right now. You’re in the queue — your match starts the moment another player joins.' : '',
   });
   for (const s of room.members.values()) if (!s.isBot) { try { s.conn.send(msg); } catch (e) {} }
 }
@@ -1882,7 +1909,7 @@ ws.attach(server, (conn) => {
     if (m.t === 'findMatch') {
       if (maintenanceOn() && s.key !== ADMIN_USER) { try { conn.send(JSON.stringify({ t: 'matchError', error: 'Matchmaking is paused for maintenance. Please check back soon.' })); } catch (e) {} return; }
       if (s.room) leaveMatch(s, true);                 // leave (and refund) any current queue first
-      const wager = [5, 10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
+      const wager = [10, 50, 100].indexOf(Number(m.wager)) >= 0 ? Number(m.wager) : 0;
       // Prefer joining an existing ready-up lobby of the same wager — you pay on READY, not on join.
       const lob = [...rooms.values()].find(r => r.phase === 'lobby' && r.wager === wager && humanCount(r) < MATCH_SIZE);
       if (lob) {
@@ -1944,7 +1971,7 @@ ws.attach(server, (conn) => {
 server.listen(PORT, () => {
   console.log('Last Duck Standing running at  http://localhost:' + PORT);
   console.log('Accounts storage: ' + (store.backend === 'supabase' ? 'Supabase (Postgres)' : 'local file (data/users.json)'));
-  console.log('Sign in, hit Find Match — bots fill any empty slots so a game always starts.');
+  console.log('Sign in, hit Find Match — bots fill FREE practice only; tournaments are real players vs real players.');
 });
 
 // Exported for the automated tests.

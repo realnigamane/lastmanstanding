@@ -87,6 +87,7 @@
         ? (snap.winner === myUsername ? '🏆 You won!' : 'Winner: ' + snap.winner)
         : '';
       if (m.won && m.payout) result = '🏆 You won! +' + m.payout + ' credits';
+      if (m.note) result = m.note;
       if (m.wins != null) $('hmWins').textContent = m.wins;
       if (m.rank) $('hmRank').textContent = m.rank.tier;
       if (m.credits != null) { myCredits = m.credits; $('hmCredits').textContent = m.credits; }
@@ -480,7 +481,9 @@
   }
   function renderSearching(m) {
     const tail = m.wager > 0 ? (' · 🏆 prize pool ' + m.pot) : '';
-    $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;
+    if (m.waiting) $('srTimer').textContent = 'Waiting for opponents…' + tail;
+    else $('srTimer').textContent = (m.secs > 0 ? 'Match starting in ' + m.secs + 's…' : 'Starting…') + tail;
+    const noteEl = $('srNote'); if (noteEl) noteEl.textContent = m.note || '';
     const dots = $('srDots');
     const lit = Math.min(m.target, Math.max(m.found, m.target - m.secs));
     let html = '';

@@ -231,7 +231,7 @@
 
         <div style="margin-bottom:13px">
           <div style="font-weight:700;color:#ffd479;margin-bottom:3px">🏆 Entry fees &amp; prizes</div>
-          <p class="sub" style="margin:0">Hit <b>Cash Tournament</b> and choose an entry fee: 5, 10, 50, or 100 credits (1 credit = $1). All entries form the <b>prize pool</b>, and the most skilled player — the last duck standing — takes it, minus a 10% fee. In a full 8-player tournament that's a win of up to <b>36 / 72 / 360 / 720</b> for those entry fees. Practice is always free.</p>
+          <p class="sub" style="margin:0">Hit <b>Cash Tournament</b> and choose an entry fee: 10, 50, or 100 credits (1 credit = $1). All entries form the <b>prize pool</b>, and the most skilled player — the last duck standing — takes it, minus a 10% fee. In a full 10-player tournament that's a win of up to <b>90 / 450 / 900</b> for those entry fees. Practice is always free.</p>
         </div>
 
         <div>
@@ -249,12 +249,11 @@
         <div id="wagerPick" style="display:none;margin-top:10px">
           <p class="muted" style="margin:0 0 7px">Choose your entry fee — the last duck standing wins the prize pool (all entries) minus a 10% fee. Win up to:</p>
           <div class="wagers">
-            <button class="wager" data-w="5">5 credits<span>win up to 36</span></button>
-            <button class="wager" data-w="10">10 credits<span>win up to 72</span></button>
-            <button class="wager" data-w="50">50 credits<span>win up to 360</span></button>
-            <button class="wager" data-w="100">100 credits<span>win up to 720</span></button>
+            <button class="wager" data-w="10">10 credits<span>win up to 90</span></button>
+            <button class="wager" data-w="50">50 credits<span>win up to 450</span></button>
+            <button class="wager" data-w="100">100 credits<span>win up to 900</span></button>
           </div>
-          <p class="muted" style="margin:7px 0 0;font-size:11px;opacity:.7">Max shown is a full 8-player tournament. Your actual prize is the live prize pool (every entry) minus the 10% fee.</p>
+          <p class="muted" style="margin:7px 0 0;font-size:11px;opacity:.7">Max shown is a full 10-player tournament. Your actual prize is the live prize pool (every entry) minus the 10% fee. Tournaments are real players only — you'll wait for at least one opponent (no bots).</p>
         </div>
         <div id="hmResult" class="muted" style="margin-top:10px;min-height:18px"></div>
       </div>
@@ -330,7 +329,8 @@
       <h1 style="font-size:20px">Finding you a match…</h1>
       <p class="sub" style="margin:6px 0 2px">Matching you with other players…</p>
       <div class="dots" id="srDots"></div>
-      <p class="muted" id="srTimer" style="margin:14px 0 16px">Starting soon…</p>
+      <p class="muted" id="srTimer" style="margin:14px 0 6px">Starting soon…</p>
+      <p id="srNote" style="margin:0 0 16px;font-size:13px;color:#ffd479;min-height:16px"></p>
       <button id="btnCancel" class="ghost wide">Cancel</button>
     </div>
   </div>
