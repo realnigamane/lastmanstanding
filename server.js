@@ -1340,23 +1340,19 @@ function makeBot(room) {
     id: nextSessionId++, isBot: true, username: uniqueBotName(room),
     conn: { send() {} }, room, player: newPlayer(),
     ai: {
-      skill: 0.9 + Math.random() * 0.1,               // higher floor — even the weakest bot is competent
-      jitter: (Math.random() - 0.5) * 12,
-      aim: 12 + Math.random() * 16,
-      react: 3 + Math.floor(Math.random() * 14),       // jump reaction spread (frames) so they never hop on the same tick
+      // Pro-grade: every bot plays near-optimally. Small per-bot variance keeps them out of lockstep.
+      skill: 0.97 + Math.random() * 0.03,
+      aim: 8 + Math.random() * 5,
+      react: 1 + Math.floor(Math.random() * 3),        // 1-3 frame jump reaction — near-instant, still slightly varied
       reactT: 0,
-      cadence: 6 + Math.floor(Math.random() * 12),     // re-plans its target on its own clock
-      cadenceT: Math.floor(Math.random() * 14),        // random phase so they're out of step from the start
-      edgeBias: (Math.random() - 0.5) * 0.66,          // aims for a different spot on the platform than its neighbours
-      // --- human-style lateral movement: tap-and-coast, reaction lag, sloppy aim, the odd fumble ---
-      dir: 0, press: 0, rest: 0, dirLag: 0,
-      burstMin: 7 + Math.floor(Math.random() * 6),     // holds a direction ~7-22 frames, then releases
-      burstVar: 8 + Math.floor(Math.random() * 10),
-      restMin: 3 + Math.floor(Math.random() * 4),      // then coasts 3-12 frames on momentum (keys up)
-      restVar: 4 + Math.floor(Math.random() * 6),
-      slop: 7 + Math.random() * 12,                    // sloppy deadzone — never nudges to the exact pixel
-      reactDir: 2 + Math.floor(Math.random() * 6),     // frames of lag before reversing direction
-      wrongTap: 0.004 + Math.random() * 0.012,         // rare wrong-way twitch (a human fat-finger)
+      cadence: 2 + Math.floor(Math.random() * 3),      // re-plans its route every 2-4 frames (very responsive)
+      cadenceT: Math.floor(Math.random() * 4),         // random phase so they don't all decide on the same tick
+      jitter: (Math.random() - 0.5) * 3,               // tiny — precise landings
+      edgeBias: (Math.random() - 0.5) * 0.42,          // slight fan-out so they aren't stacked clones
+      lead: 15 + Math.floor(Math.random() * 9),        // frames it leads a moving platform by
+      slop: 2 + Math.random() * 3,                     // tight deadzone — accurate control
+      reactDir: 1 + Math.floor(Math.random() * 2),     // near-instant direction reversal
+      dir: 0, dirLag: 0,
       elite: false, target: null,
     },
   };
@@ -1365,24 +1361,12 @@ function makeBot(room) {
 }
 function fillWithBots(room) {
   while (room.members.size < MATCH_SIZE) makeBot(room);
-  // Make 2-3 opponents genuinely elite: near-flawless dodging, precise landings, fast reactions.
-  const bots = [...room.members.values()].filter(m => m.isBot);
-  const shuffled = bots.slice().sort(() => Math.random() - 0.5);
-  const eliteN = Math.min(bots.length, 2 + (Math.random() < 0.5 ? 1 : 0));
-  for (let i = 0; i < eliteN; i++) {
-    const a = shuffled[i].ai;
-    a.elite = true;
-    a.skill = 1;
-    a.jitter = (Math.random() - 0.5) * 2.5;            // near-perfect, but not robotically pixel-exact
-    a.aim = 6 + Math.random() * 4;
-    a.react = 1 + Math.floor(Math.random() * 3);       // fast, but still varied so even elites don't sync
-    a.cadence = 3 + Math.floor(Math.random() * 5);
-    // elites still move like a good human — smooth, minimal coasting, quick but not pixel-instant reactions
-    a.burstMin = 16; a.burstVar = 12;
-    a.restMin = 0; a.restVar = 3;
-    a.slop = 2 + Math.random() * 3;
-    a.reactDir = 1 + Math.floor(Math.random() * 2);
-    a.wrongTap = 0;
+  // A couple are literally flawless — perfect skill, instant reads, pixel-tight control.
+  const bots = [...room.members.values()].filter(m => m.isBot).sort(() => Math.random() - 0.5);
+  for (let i = 0; i < Math.min(2, bots.length); i++) {
+    const a = bots[i].ai;
+    a.elite = true; a.skill = 1; a.aim = 6; a.react = 1;
+    a.jitter = (Math.random() - 0.5) * 1.2; a.slop = 1.5; a.reactDir = 1; a.cadence = 2;
   }
 }
 
@@ -1578,10 +1562,21 @@ function botThink(room, bot) {
   const ai = bot.ai;
   if (!p.alive || p.spectator) { p.input.left = p.input.right = p.input.jump = false; return; }
   const feet = p.y + PH, cx = p.x + PW / 2;
-
   const onGround = p.onPlatform != null;
-  // Each bot re-plans on its OWN cadence (plus immediately when it lands or loses its target). This
-  // staggers their decisions so they diverge instead of all picking the same platform on the same tick.
+
+  const platVx = (pl) => (pl.amp != null ? Math.cos(pl.phase) * pl.amp * pl.spd : 0);   // px/tick a mover is sliding
+  const predX = (pl, t) => (pl.x + pl.w / 2) + platVx(pl) * t;                            // where its centre will be in t ticks
+  // How exposed is a spot to the balls — higher = more likely to get clipped there.
+  const risk = (px, py) => {
+    let r = 0;
+    for (const b of room.hazards) {
+      const dx = px - b.x, dy = py - b.y, d2 = dx * dx + dy * dy, near = 132 + b.r;
+      if (d2 < near * near) r += (near * near - d2) / (near * near);
+    }
+    return r;
+  };
+
+  // Re-plan on the bot's own fast clock: choose the reachable platform that is safest AND highest.
   ai.cadenceT = (ai.cadenceT || 0) - 1;
   let best = ai.target != null ? room.platforms.find(pl => pl.id === ai.target) : null;
   if (best && best.y >= feet - 2) best = null;
@@ -1590,12 +1585,13 @@ function botThink(room, bot) {
     best = null; let bestScore = Infinity, nearest = null, nearGap = Infinity;
     for (const plat of room.platforms) {
       if (plat.y >= feet - 4) continue;              // must be above us
-      if (plat.y < p.y - 168) continue;              // within a single jump's reach
-      if (plat.y < TOP_SAFE) continue;               // stay on-screen — never leap above the frame
-      const gap = Math.abs((plat.x + plat.w / 2) - cx);
+      if (plat.y < p.y - 172) continue;              // within a single jump's reach
+      if (plat.y < TOP_SAFE) continue;               // stay on-screen
+      const tx = predX(plat, ai.lead);
+      const gap = Math.abs(tx - cx);
       if (gap < nearGap) { nearGap = gap; nearest = plat; }
-      if (gap > 230) continue;
-      const score = gap + (feet - plat.y) * 0.2;
+      if (gap > 250) continue;
+      const score = gap + (feet - plat.y) * 0.12 + risk(tx, plat.y) * 300;   // avoid hazardous landing spots
       if (score < bestScore) { bestScore = score; best = plat; }
     }
     if (!best) best = nearest;
@@ -1603,59 +1599,47 @@ function botThink(room, bot) {
     if (best) ai.target = best.id;
   }
 
-  // Hazard evasion — skilled bots see the ball coming earlier and from farther away.
+  // Read the balls very early and always dodge — toward open space, never into the wall it'd pin against.
   let evade = 0, danger = false;
-  const reach = 84 + ai.skill * 54;
+  const reach = 108 + ai.skill * 62;
   for (const b of room.hazards) {
     const bx = cx - b.x, by = (feet - PH / 2) - b.y;
-    if (bx * bx + by * by < (b.r + reach) * (b.r + reach)) { evade = bx >= 0 ? 1 : -1; danger = true; break; }
+    if (bx * bx + by * by < (b.r + reach) * (b.r + reach)) {
+      let dir = bx >= 0 ? 1 : -1;
+      if ((dir < 0 && cx < 92) || (dir > 0 && cx > WORLD.w - 92)) dir = -dir;   // don't get cornered
+      evade = dir; danger = true; break;
+    }
   }
 
-  // Aim for a slightly off-centre spot on the target so a crowd fans out.
-  let goX = best ? (best.x + best.w / 2 + best.w * ai.edgeBias) : cx;
-  if (evade) goX = cx + evade * 150;
+  // Aim at the predicted target centre (leads movers) with a small per-bot offset so a crowd fans out.
+  let goX = best ? (predX(best, ai.lead) + best.w * ai.edgeBias) : cx;
+  if (evade) goX = cx + evade * 175;
   goX += ai.jitter;
-  const d = goX - cx;
-  // ---- Human lateral movement: tap-and-coast, not a smooth glide to the exact pixel ----
-  const dz = evade ? 4 : ai.slop;                        // sloppy deadzone — no robotic micro-centring
-  const want = Math.abs(d) <= dz ? 0 : (d < 0 ? -1 : 1);
-  ai.dirLag = (want !== ai.dir) ? (ai.dirLag + 1) : 0;   // build up lag before reversing
-  const lagNeeded = evade ? 0 : ai.reactDir;
-  if (evade) {
-    ai.dir = want; ai.press = 24; ai.rest = 0;           // dodging: commit hard, no coasting
-  } else if (ai.rest > 0) {
-    ai.rest--; ai.dir = 0;                                // coasting — keys released, momentum/friction carries in
-  } else {
-    if (want !== ai.dir && ai.dirLag >= lagNeeded) {
-      ai.dir = want;
-      ai.press = (want === 0) ? 0 : (ai.burstMin + Math.floor(Math.random() * ai.burstVar));
-    }
-    if (ai.dir !== 0) {
-      if (ai.press > 0) ai.press--;
-      if (ai.press <= 0) { ai.rest = ai.restMin + Math.floor(Math.random() * ai.restVar); ai.dir = 0; }  // release -> coast
-    }
-  }
-  if (!evade && ai.wrongTap && Math.random() < ai.wrongTap) ai.dir = ai.dir !== 0 ? -ai.dir : (Math.random() < 0.5 ? -1 : 1);
+
+  // Tight, responsive control: drive to goX with a small deadzone and a 1-frame reversal lag.
+  const dz = evade ? 3 : ai.slop;
+  const want = Math.abs(goX - cx) <= dz ? 0 : (goX < cx ? -1 : 1);
+  ai.dirLag = (want !== ai.dir) ? (ai.dirLag + 1) : 0;
+  if (evade || want === ai.dir || ai.dirLag >= ai.reactDir) ai.dir = want;
   p.input.left = ai.dir < 0;
   p.input.right = ai.dir > 0;
 
+  // Jump the instant we can make the target, always beat the rising floor, always hop a ball.
   let wantJump = false;
   if (onGround) {
     const plat = room.platforms.find(pl => pl.id === p.onPlatform);
     if (best && best.y < feet - 6 && best.y >= TOP_SAFE) {
-      const tcx = best.x + best.w / 2;
+      const tcx = predX(best, ai.lead);
       if (Math.abs(tcx - cx) < best.w / 2 + ai.aim) wantJump = true;
       else if (plat) {
-        if (tcx > cx && cx > plat.x + plat.w - 26) wantJump = true;
-        if (tcx < cx && cx < plat.x + 26) wantJump = true;
+        if (tcx > cx && cx > plat.x + plat.w - 24) wantJump = true;
+        if (tcx < cx && cx < plat.x + 24) wantJump = true;
       }
     }
-    // React to the rising floor SOONER the better the bot is — this is what makes strong bots hard to outlast.
-    if (feet > WORLD.h - (58 + ai.skill * 36)) wantJump = true;
-    if (danger && feet > 150) wantJump = true;        // dodge an incoming ball
+    if (feet > WORLD.h - (70 + ai.skill * 40)) wantJump = true;   // beat the floor with room to spare
+    if (danger && feet > 140) wantJump = true;                    // hop an incoming ball
   }
 
-  // Per-bot reaction delay so they don't all jump on the exact same tick (that was the obvious tell).
   if (wantJump) {
     if (ai.reactT <= 0) ai.reactT = ai.react;
     ai.reactT--;
